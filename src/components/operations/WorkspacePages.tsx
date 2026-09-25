@@ -13,7 +13,7 @@ export function Overview({ data, navigate, onQuote, preview }: { preview: boolea
   const stages = ['Draft', 'Pending review', 'Approved'];
   const pending = data.emails.filter(m => m.status === 'Needs review');
   return <>
-    <div className="page-heading dashboard-heading"><div><p className="eyebrow">OPERATIONS OVERVIEW</p><h1>Dashboard</h1><p>Messages, quotations, and customer work in one place.</p></div><button className="primary" onClick={onQuote}><Plus size={16}/> New quotation</button></div>
+    <div className="page-heading dashboard-heading"><h1>Dashboard</h1><button className="primary" onClick={onQuote}><Plus size={16}/> New quotation</button></div>
     {preview ? <div className="metric-grid dashboard-preview-metrics">
       <button className="metric-card" onClick={()=>navigate('inbox')}><span>Emails to review</span><strong>{pending.length}</strong></button>
       <button className="metric-card" onClick={()=>navigate('customers')}><span>Customers</span><strong>{data.customers.length}</strong></button>
