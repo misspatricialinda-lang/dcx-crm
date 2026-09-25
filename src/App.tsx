@@ -42,7 +42,7 @@ import {
   FORMULA_VERSION,
   newDraft,
 } from "./lib/costing";
-import type { Workspace, SavedQuote, Client, PriceBook } from "./types/operations";
+import type { Workspace, SavedQuote, Client, PriceBook, QuoteDraft } from "./types/operations";
 
 const nav = [
   { id: "dashboard", label: "Overview", icon: LayoutDashboard },
@@ -115,6 +115,14 @@ function Dashboard({
     if (!preview) setRateVersions(v => ({ ...v, [saved.id]: saved.version }));
     update(d => ({ ...d, books: d.books.some(b => b.id === saved.id) ? d.books.map(b => b.id === saved.id ? saved : b) : [...d.books, saved], bookHistory: [...d.books.filter(b => b.id === saved.id), ...d.bookHistory] }), `${saved.name} saved${preview ? ' in this preview' : ' to Supabase'}.`);
     return saved;
+  }
+  async function saveSheetPricing(sheet: QuoteDraft): Promise<void> {
+    const book = data.books.find(b => b.id === sheet.bookId);
+    if (!book) throw new Error('The selected pricing agreement is unavailable.');
+    if (!calculateCost(sheet).valid) throw new Error('Correct invalid sheet inputs before saving prices.');
+    const items = sheet.lines.map(({ rateItemId, quantity: _quantity, ...line }) => ({ ...line, id: rateItemId }));
+    const saved = await saveRates({ ...book, items, taxPercent: sheet.taxPercent, updatedAt: new Date().toISOString() });
+    update(d => ({ ...d, draft: d.draft?.bookId === saved.id ? { ...d.draft, bookVersion: saved.version } : d.draft }));
   }
   const [tab, setTab] = useState(() =>
     nav.map((n) => n.id).includes(location.hash.slice(1))
@@ -535,6 +543,9 @@ function Dashboard({
                 onBack={() => navigate("customers", draft.customerId)}
                 onChange={(draft) => update((d) => ({ ...d, draft }))}
                 onSave={saveQuote}
+                onSavePricing={saveSheetPricing}
+                pricingDisabled={!preview && ratesState !== 'ready'}
+                hasSavedPricing={preview || !!rateVersions[draft.bookId]}
               />
               </>
             )}

@@ -8,7 +8,7 @@ export interface RateItem {
 export interface PriceBook {
   id: BookId; name: string; description: string; version: number;
   status: 'Draft' | 'Published'; effectiveFrom: string; effectiveTo: string;
-  items: RateItem[]; updatedAt: string;
+  items: RateItem[]; taxPercent?: number; updatedAt: string;
 }
 export interface CostLine extends RateItem { quantity: number; rateItemId: string; }
 export interface FlatLine { id: string; description: string; amount: number; addition: number; }

@@ -10,6 +10,8 @@ const env = { APP_LOGIN_EMAIL: 'owner@example.com', APP_LOGIN_PASSWORD: 'test-pa
 const cookie = `dcx_session=${createSession({ email: env.APP_LOGIN_EMAIL, password: env.APP_LOGIN_PASSWORD, secret: env.APP_SESSION_SECRET })}`;
 test('invalid costs, duplicate rates and impossible dates cannot enter shared pricing', () => {
   assert.equal(validatePriceBook(book).items[0].manualCost, 100);
+  assert.equal(validatePriceBook({ ...book, taxPercent: 13 }).taxPercent, 13);
+  assert.throws(() => validatePriceBook({ ...book, taxPercent: 101 }));
   for (const patch of [{ margin: 1 }, { exchangeRate: 0 }, { manualCost: -1 }, { supplierCost: '100' }, { costMode: 'other' }]) {
     assert.throws(() => validatePriceBook({ ...book, items: [{ ...book.items[0], ...patch }] }));
   }
@@ -48,9 +50,13 @@ test('shared rates survive a read, preserve history, and reject stale saves', as
   assert.equal((await save(null)).status, 409);
   assert.equal((await save(1, { ...book, name: 'Updated' })).status, 201);
   assert.equal((await save(1)).status, 409);
+  assert.equal((await save(null, { ...book, id: 'bgis', name: 'BGIS', taxPercent: 5, items: [{ ...book.items[0], margin: .45, manualCost: 80 }] })).status, 201);
   const saved = await (await fetch(url, { headers: { Cookie: cookie } })).json();
-  assert.equal(saved.books[0].name, 'Updated');
-  assert.equal(saved.books[0].version, 2);
+  assert.equal(saved.books.find(b => b.id === 'standard').name, 'Updated');
+  assert.equal(saved.books.find(b => b.id === 'standard').version, 2);
+  assert.equal(saved.books.find(b => b.id === 'standard').items[0].margin, .3);
+  assert.equal(saved.books.find(b => b.id === 'bgis').items[0].margin, .45);
+  assert.equal(saved.books.find(b => b.id === 'bgis').taxPercent, 5);
   assert.equal(saved.history[0].name, 'Standard');
   assert.equal(rows[0].saved_by, env.APP_LOGIN_EMAIL);
 });

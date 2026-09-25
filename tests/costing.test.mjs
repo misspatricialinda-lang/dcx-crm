@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { calculateCost, bookUsable } from '../src/lib/costing.ts';
+import { calculateCost, bookUsable, newDraft } from '../src/lib/costing.ts';
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/cost-workbook.json', import.meta.url)));
 const input = () => structuredClone(fixture.input);
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`);
@@ -50,4 +50,13 @@ test('rate approval honors status and inclusive effective dates', () => {
   const b = { status: 'Published', effectiveFrom: '2026-09-01', effectiveTo: '2026-09-30' };
   assert.equal(bookUsable(b, '2026-09-16'), true); assert.equal(bookUsable(b, '2026-09-30'), true);
   assert.equal(bookUsable(b, '2026-10-01'), false); assert.equal(bookUsable({ ...b, status: 'Draft' }, '2026-09-16'), false);
+});
+test('new Standard and BGIS worksheets load their own saved margins and tax', () => {
+  const row = {id:'labor',supplier:'DCX',description:'Labor',unit:'hour',supplierCost:0,multiplier:1,manualCost:100,costMode:'manual',exchangeRate:1,margin:.25};
+  const standard = newDraft({id:'standard',version:2,items:[row],taxPercent:13});
+  const bgis = newDraft({id:'bgis',version:4,items:[{...row,margin:.4,manualCost:80}],taxPercent:5});
+  assert.equal(standard.lines[0].margin,.25);
+  assert.equal(bgis.lines[0].margin,.4);
+  assert.equal(standard.taxPercent,13);
+  assert.equal(bgis.taxPercent,5);
 });

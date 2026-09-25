@@ -45,5 +45,5 @@ export function lineFromRate(rate: PriceBook['items'][number], quantity = 0): Co
 export function newDraft(book: PriceBook, customerId = '', site = ''): QuoteDraft {
   return { customerId, site, title: 'UPS maintenance and battery services', bookId: book.id, bookVersion: book.version,
     lines: book.items.map(r => lineFromRate(r)), flatLines: [], shipping: 0, brokerage: 0, usdRate: 0,
-    taxPercent: 0, notes: '', validityDays: 30, currency: 'CAD' };
+    taxPercent: book.taxPercent ?? 0, notes: '', validityDays: 30, currency: 'CAD' };
 }
