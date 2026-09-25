@@ -73,6 +73,7 @@ function Dashboard({
   preview: boolean;
 }) {
   const mailConnection = useMailConnection();
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [loaded] = useState(() => {
     const result = loadWorkspace();
     return preview
@@ -384,6 +385,7 @@ function Dashboard({
           ))}
         </nav>
         <div className="sidebar-bottom sidebar-tools">
+          <button className="sidebar-inbox-shortcut" onClick={() => { setCalendarOpen(open => !open); setMobileNav(false); }} aria-expanded={calendarOpen} aria-controls="calendar-widget"><CalendarDays size={18}/><span>Talk to Calendar Agent</span></button>
           <button className="sidebar-inbox-shortcut" onClick={() => navigate("inbox")} aria-label={`${pending} messages need review`}>
             <Bell size={18} /><span>Notifications</span>{pending > 0 && <b>{pending}</b>}
           </button>
@@ -555,6 +557,7 @@ function Dashboard({
           )}
         </main>
       </div>
+      {calendarOpen && <aside className="calendar-widget" id="calendar-widget" aria-label="Calendar Agent chat"><button className="calendar-widget-close" aria-label="Close Calendar Agent" onClick={() => setCalendarOpen(false)}><X size={17}/></button><CalendarAgent preview={preview}/></aside>}
       {toast && (
         <div className="toast" role="status">
           <ShieldCheck size={17} />

@@ -1,8 +1,8 @@
 import { getSession, configuration } from './auth-core.js';
 import { parseCalendarResponse } from './calendar-response.js';
 import { createClient } from '@supabase/supabase-js';
+import { n8nConfig } from './n8n-config.js';
 
-const WEBHOOK = 'https://dcx-tech.app.n8n.cloud/webhook/bca2dd48-ecb0-49b9-b60a-bb87d9824cdc/chat';
 function send(res, status, body) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -38,8 +38,10 @@ export async function calendarAgentHandler(req, res, env = process.env, injected
   try { body = await readBody(req); } catch { return send(res, 400, { error: 'Invalid request.' }); }
   const { message, sessionId } = body || {};
   if (typeof message !== 'string' || !message.trim() || message.length > 4000 || typeof sessionId !== 'string' || !/^[a-zA-Z0-9-]{8,100}$/.test(sessionId)) return send(res, 400, { error: 'Invalid message or session.' });
+  const webhook = n8nConfig(env).calendarWebhook;
+  if (!webhook) return send(res, 503, { error: 'Calendar Agent webhook is not configured.' });
   try {
-    const upstream = await fetch(WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sendMessage', chatInput: message.trim(), sessionId }), signal: AbortSignal.timeout(90000) });
+    const upstream = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sendMessage', chatInput: message.trim(), sessionId }), signal: AbortSignal.timeout(90000) });
     const raw = await upstream.text();
     if (!upstream.ok) return send(res, 502, { error: 'Calendar Agent is unavailable. Check that the n8n workflow is active.' });
     const answer = parseCalendarResponse(raw);

@@ -3,6 +3,7 @@ import { CalendarDays, Send } from 'lucide-react';
 
 type Message = { role: 'user' | 'agent'; text: string };
 const sessionKey = 'dcx-calendar-agent-session';
+const historyKey = 'dcx-calendar-agent-messages';
 const suggestions = [
   "Check this week's availability",
   "What's on my calendar tomorrow?",
@@ -15,7 +16,8 @@ function sessionId() {
 }
 
 export function CalendarAgent({ preview }: { preview: boolean }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => { try { return JSON.parse(sessionStorage.getItem(historyKey) || '[]'); } catch { return []; } });
+  useEffect(() => { sessionStorage.setItem(historyKey, JSON.stringify(messages.slice(-40))); }, [messages]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
