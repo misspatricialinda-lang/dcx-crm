@@ -13,17 +13,14 @@ export function EmailReport() {
     return()=>{active=false;clearInterval(timer);};
   },[days]);
   const r=data?.report;
-  const displayDate=(value:string)=>new Date(value).toLocaleDateString('en-CA',{timeZone:timezone});
   const complete=r?.folders?.filter((f:any)=>['inbox','sentitems'].includes(f.folder.toLowerCase()));
   return <section className="panel email-report">
-    <div className="panel-heading"><div><h2>Email performance</h2><p className="small muted">Actual received and sent mail across the selected period.</p></div><div className="button-row">
+    <div className="panel-heading"><h2>Email performance</h2><div className="button-row">
       <select aria-label="Email reporting period" value={days} onChange={e=>setDays(e.target.value)}><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
     </div></div>
     {error&&<p className="notice amber" role="alert">{error}</p>}
     {!r&&!error&&<p role="status">Loading email performance…</p>}
     {r&&<>
-      <p className="small muted">{data.mailbox.address} · Last sync: {data.mailbox.last_synced_at?displayDate(data.mailbox.last_synced_at):'Not synced'}</p>
-      <p className="small muted">These totals cover this connected mailbox. The conversation list and contact activity include stored history from other mailboxes.</p>
       {(complete?.length!==2||complete.some((f:any)=>!f.backfill_complete||f.last_error))&&<p className="notice amber">Counts may be incomplete. Finish syncing Inbox and Sent mail; check folder errors below.</p>}
       <div className="metric-grid">{[['Received',r.received],['Sent',r.sent],['Conversations replied',`${r.conversations_replied} / ${r.conversations_received}`],['Reply rate',r.reply_rate===null?'—':`${r.reply_rate}%`]].map(([label,value])=><div className="metric-card" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
     </>}
