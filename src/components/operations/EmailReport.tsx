@@ -26,9 +26,6 @@ export function EmailReport() {
       <p className="small muted">These totals cover this connected mailbox. The conversation list and contact activity include stored history from other mailboxes.</p>
       {(complete?.length!==2||complete.some((f:any)=>!f.backfill_complete||f.last_error))&&<p className="notice amber">Counts may be incomplete. Finish syncing Inbox and Sent mail; check folder errors below.</p>}
       <div className="metric-grid">{[['Received',r.received],['Sent',r.sent],['Conversations replied',`${r.conversations_replied} / ${r.conversations_received}`],['Reply rate',r.reply_rate===null?'—':`${r.reply_rate}%`]].map(([label,value])=><div className="metric-card" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
-      <p className="small muted">Reply rate = conversations received in this period with a later sent message, divided by conversations received. Average first response: {r.average_response_minutes===null?'no replies yet':`${r.average_response_minutes} minutes`}. These are sent-copy counts, not delivery or read receipts.</p>
-      <details open={days==='1'}><summary>Daily breakdown</summary><div className="table-scroll"><table><thead><tr><th>Date</th><th>Received</th><th>Sent</th><th>Conversations replied that day</th></tr></thead><tbody>{r.daily.map((day:any)=><tr key={day.day}><td>{day.day}</td><td>{day.received}</td><td>{day.sent}</td><td>{day.replied}</td></tr>)}</tbody></table></div><p className="field-help">Daily replies include conversations received on earlier days. A conversation can appear on several days; daily counts do not add up to the period's distinct conversation count.</p></details>
-      <details><summary>Sync health</summary>{r.folders.length?r.folders.map((f:any)=><p key={f.folder}>{f.folder}: {f.last_error|| (f.backfill_complete?'History loaded':'Importing history')} · {displayDate(f.updated_at)}</p>):<p>No folder sync completed yet.</p>}</details>
     </>}
   </section>;
 }
