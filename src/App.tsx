@@ -383,9 +383,22 @@ function Dashboard({
             </button>
           ))}
         </nav>
+        <div className="sidebar-bottom sidebar-tools">
+          <button className="sidebar-inbox-shortcut" onClick={() => navigate("inbox")} aria-label={`${pending} messages need review`}>
+            <Bell size={18} /><span>Notifications</span>{pending > 0 && <b>{pending}</b>}
+          </button>
+          <div className="sidebar-account">
+            <button className="sidebar-account-button" aria-label="Account menu" aria-expanded={profile} onClick={() => setProfile(!profile)}>
+              <span className="sidebar-avatar">{email.slice(0, 1).toUpperCase()}</span>
+              <span className="sidebar-account-email">{email}</span>
+              <ChevronDown size={14} />
+            </button>
+            {profile && <button className="sidebar-signout" onClick={logout}><LogOut size={15} /> Sign out</button>}
+          </div>
+        </div>
       </aside>
       <div className="app-body">
-        <header className={`topbar ${tab === "inbox" ? "mail-topbar" : ""}`}>
+        {tab !== "dashboard" && <header className={`topbar ${tab === "inbox" ? "mail-topbar" : ""}`}>
           <button
             className="icon-button mobile-menu"
             aria-label="Open navigation"
@@ -435,37 +448,11 @@ function Dashboard({
               </div>
             )}
           </div>
-          <button
-            className="notification-button"
-            aria-label={`${pending} messages need review`}
-            onClick={() => navigate("inbox")}
-          >
-            <Bell size={19} />
-            {pending > 0 && <i />}
-          </button>
-          <div className="profile-wrap">
-            <button
-              className="profile-button"
-              aria-label="Account menu"
-              onClick={() => setProfile(!profile)}
-            >
-              <span>R</span>
-              <ChevronDown size={13} />
-            </button>
-            {profile && (
-              <div className="profile-menu">
-                <small>{email}</small>
-                <button onClick={logout}>
-                  <LogOut size={14} />
-                  Sign out
-                </button>
-              </div>
-            )}
-          </div>
-        </header>
+        </header>}
         <main
-          className={`main-content ${tab === "inbox" ? "mail-main-content" : ""}`}
+          className={`main-content ${tab === "inbox" ? "mail-main-content" : ""} ${tab === "dashboard" ? "dashboard-main-content" : ""}`}
         >
+          {tab === "dashboard" && <button className="icon-button mobile-menu dashboard-mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={21}/></button>}
           {storageError && (
             <div role="alert" className="notice amber">
               {storageError}
