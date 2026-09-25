@@ -1,5 +1,6 @@
 import { getSession, configuration } from './auth-core.js';
 import { parseCalendarResponse } from './calendar-response.js';
+import { createClient } from '@supabase/supabase-js';
 
 const WEBHOOK = 'https://dcx-tech.app.n8n.cloud/webhook/bca2dd48-ecb0-49b9-b60a-bb87d9824cdc/chat';
 function send(res, status, body) {
@@ -14,9 +15,22 @@ async function readBody(req) {
   return JSON.parse(raw || '{}');
 }
 
-export async function calendarAgentHandler(req, res, env = process.env) {
+export async function calendarAgentHandler(req, res, env = process.env, injectedDb) {
   res.setHeader('Cache-Control', 'no-store');
   if (!getSession(req, configuration(env))) return send(res, 401, { error: 'Sign in to use Calendar Agent.' });
+  if (req.method === 'GET') {
+    const url = new URL(req.url || '/', 'http://localhost');
+    if (url.searchParams.get('action') !== 'emails') return send(res, 400, { error: 'Unknown Calendar Agent request.' });
+    const query = (url.searchParams.get('q') || '').trim();
+    if (query.length > 80 || query.includes('@')) return send(res, 400, { error: 'Invalid email search.' });
+    if (!injectedDb && (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY)) return send(res, 503, { error: 'Email search requires the database connection.' });
+    try {
+      const db = injectedDb || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+      const { data, error } = await db.rpc('calendar_email_suggestions', { p_query: query, p_limit: 8 });
+      if (error) throw error;
+      return send(res, 200, { emails: data.map(row => row.email) });
+    } catch { return send(res, 503, { error: 'Email search is unavailable. Apply the calendar email search migration.' }); }
+  }
   if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed.' });
   const protocol = env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
   if (req.headers.origin !== `${protocol}://${req.headers.host}` || req.headers['sec-fetch-site'] === 'cross-site') return send(res, 403, { error: 'Request origin is not allowed.' });
