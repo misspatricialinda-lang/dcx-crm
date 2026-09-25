@@ -18,7 +18,7 @@ const labels: Record<string, string> = { contacts: 'Contacts', sites: 'Sites', e
 export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQuotes, quoteFocus }: { preview: boolean; onLoaded: (clients: Client[]) => void; onQuote: (id: string) => void; focusId?: string; data: Workspace; renderQuotes: (id: string) => ReactNode; quoteFocus?: string }) {
   const api = (query: string, options?: RequestInit) => crmRequest(query, options, preview ? data : undefined);
   const [customers, setCustomers] = useState<Row[]>([]);
-  const [selected, setSelected] = useState(focusId || '');
+  const [selected, setSelected] = useState(focusId && !['new','proposal'].includes(focusId) ? focusId : '');
   const [tab, setTab] = useState(quoteFocus ? 'quotations' : 'proposals');
   const [createProposal,setCreateProposal]=useState(false);
   function makeProposal(id:string){setSelected(id);setTab('proposals');setCreateProposal(true);}
@@ -27,10 +27,10 @@ export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQ
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
-  const [edit, setEdit] = useState<{ entity: string; row: Row } | null>(null);
+  const [edit, setEdit] = useState<{ entity: string; row: Row } | null>(focusId === 'new' ? { entity: 'customers', row: {} } : null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(focusId === 'proposal' ? 'Choose a customer below, then select Make proposal.' : '');
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(''); setHistory({});

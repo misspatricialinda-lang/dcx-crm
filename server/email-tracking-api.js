@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { configuration, getSession, createSession } from './auth-core.js';
 import { mailHandler } from './mail-api.js';
 import { renewHostingerReference, hostingerConfigured, hostingerConfiguration } from './hostinger-mail.js';
-import { mailConfigured, mailConfiguration } from './microsoft-graph.js';
+import { mailConfigured, mailConfiguration, graphClient } from './microsoft-graph.js';
 import { activeMicrosoftConnection, delegatedGraphClient } from './microsoft-oauth.js';
 import { normalizeMessage, requireId, revision, text, validateWorkflow, workflowStatuses, pageCursor, encodeCursor } from './email-tracking-model.js';
 
@@ -50,7 +50,9 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
   const mail = injected.provider || ((a,p={},b) => providerRequest(a,p,b,env));
   const oauth = provider==='microsoft' ? await activeMicrosoftConnection(env,injected.db).catch(()=>null) : null;
   const delegated = provider==='microsoft' && oauth && !injected.provider ? await delegatedGraphClient(env,injected.db) : null;
-  const delta = injected.delta || (provider==='microsoft' && !injected.provider ? delegated?.graph || null : null);
+  // Use a durable delta checkpoint for either Microsoft sign-in mode.
+  const delta = injected.delta || (provider==='microsoft' && !injected.provider
+    ? delegated?.graph || (mailConfigured(mailConfiguration(env)) ? graphClient(env) : null) : null);
   const checked = async query => { const {data,error} = await query; if(error) { const e=new Error(error.message); e.code=error.code; throw e; } return data; };
   let box;
   try {
@@ -103,17 +105,22 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
       if(action==='threads') {
         const status=url.searchParams.get('status') || 'all';
         if(!['all','due',...workflowStatuses].includes(status)) throw new Error('Invalid queue.');
-        let query=db.from('email_threads').select('*').eq('mailbox_id',box.id);
+        const allMailboxes=url.searchParams.get('scope')==='all';
+        let query=db.from('email_threads').select('*');
+        if(!allMailboxes) query=query.eq('mailbox_id',box.id);
         if(status==='due') query=query.neq('status','closed').lte('followup_at',new Date().toISOString());
         else if(status!=='all') query=query.eq('status',status);
         const search=url.searchParams.get('q'); if(search) query=query.ilike('subject',`%${text(search,200).replace(/[\\%_]/g,'\\$&')}%`);
         const cursor=pageCursor(url.searchParams.get('cursor'));
         if(cursor) query=query.or(`last_message_at.lt.${cursor.at},and(last_message_at.eq.${cursor.at},id.lt.${cursor.id})`);
         const records=await checked(query.order('last_message_at',{ascending:false}).order('id',{ascending:false}).limit(31));
-        return respond(res,200,{records:records.slice(0,30),next:records.length>30?encodeCursor(records[29],'last_message_at'):null,mailbox:{address:box.address,last_synced_at:box.last_synced_at},automationEnabled:(env.EMAIL_TRACKING_TOKEN || '').length>=32});
+        const mailboxes=allMailboxes?await checked(db.from('email_mailboxes').select('id,provider,address,last_synced_at')):[];
+        return respond(res,200,{records:records.slice(0,30),next:records.length>30?encodeCursor(records[29],'last_message_at'):null,mailbox:{id:box.id,address:box.address,last_synced_at:box.last_synced_at},mailboxes,automationEnabled:(env.EMAIL_TRACKING_TOKEN || '').length>=32});
       }
       if(action==='thread') {
-        const thread=await getThread(url.searchParams.get('id'));
+        const history=url.searchParams.get('history')==='1';
+        const thread=history?await checked(db.from('email_threads').select('*').eq('id',requireId(url.searchParams.get('id'))).maybeSingle()):await getThread(url.searchParams.get('id'));
+        if(!thread)return respond(res,404,{error:'Conversation not found.'});
         let q=db.from('email_messages').select('*').eq('thread_id',thread.id);
         const cursor=pageCursor(url.searchParams.get('cursor'));
         if(cursor) q=q.or(`occurred_at.lt.${cursor.at},and(occurred_at.eq.${cursor.at},id.lt.${cursor.id})`);
@@ -124,7 +131,28 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
           checked(db.from('email_automation_jobs').select('id,kind,status,error,attempts,execution_id,created_at').eq('thread_id',thread.id).order('created_at',{ascending:false}).limit(10)),
           checked(db.from('email_messages').select('*').eq('thread_id',thread.id).eq('direction','incoming').order('occurred_at',{ascending:false}).order('id',{ascending:false}).limit(1).maybeSingle())
         ]);
-        return respond(res,200,{thread,messages:messages.slice(0,30).map(safeMessage),next:messages.length>30?encodeCursor(messages[29],'occurred_at'):null,draft:safeDraft(drafts[0]),activity,jobs,reply_target:replyTarget?safeMessage(replyTarget):null});
+        return respond(res,200,{thread,messages:messages.slice(0,30).map(safeMessage),next:messages.length>30?encodeCursor(messages[29],'occurred_at'):null,draft:safeDraft(drafts[0]),activity,jobs,reply_target:replyTarget?safeMessage(replyTarget):null,readOnly:thread.mailbox_id!==box.id});
+      }
+      if(action==='correspondents') {
+        const messages=await checked(db.from('email_messages').select('id,thread_id,direction,sender,to_addresses,cc_addresses,occurred_at').order('occurred_at',{ascending:false}).limit(500));
+        const people=new Map();
+        const incomingByThread=new Map();
+        const address=value=>String(value||'').trim().toLowerCase();
+        const person=email=>{if(!people.has(email))people.set(email,{email,received:0,sent:0,replies:0,last_at:'',thread_id:''});return people.get(email);};
+        for(const m of [...messages].reverse()) {
+          if(m.direction==='incoming') {
+            const email=address(m.sender);if(!email.includes('@'))continue;
+            const p=person(email);p.received++;if(m.occurred_at>p.last_at){p.last_at=m.occurred_at;p.thread_id=m.thread_id;}
+            if(!incomingByThread.has(m.thread_id))incomingByThread.set(m.thread_id,new Set());
+            incomingByThread.get(m.thread_id).add(email);
+          } else {
+            for(const email of new Set([...(m.to_addresses||[]),...(m.cc_addresses||[])].map(address).filter(x=>x.includes('@')))) {
+              const p=person(email);p.sent++;if(incomingByThread.get(m.thread_id)?.has(email))p.replies++;
+              if(m.occurred_at>p.last_at){p.last_at=m.occurred_at;p.thread_id=m.thread_id;}
+            }
+          }
+        }
+        return respond(res,200,{people:[...people.values()].sort((a,b)=>b.last_at.localeCompare(a.last_at)).slice(0,12),sampled:messages.length,limit:500});
       }
       return respond(res,400,{error:'Unknown read action.'});
     }

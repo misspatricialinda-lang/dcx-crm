@@ -1,5 +1,6 @@
 import { TrackingOverview } from './TrackingOverview';
 import { EmailReport } from './EmailReport';
+import { CorrespondentActivity } from './CorrespondentActivity';
 import { SHOW_RATES } from '../../lib/features';
 import { MailConnectionCard } from './MailConnection';
 import { useState } from 'react';
@@ -13,7 +14,13 @@ export function Overview({ data, navigate, onQuote, preview }: { preview: boolea
   const activeBooks = data.books.filter(b => bookUsable(b)); const approved = data.quotes.filter(q => q.status === 'Approved');
   const stages = ['Draft', 'Pending review', 'Approved'];
   return <><div className="page-heading"><div><p className="eyebrow">OPERATIONS OVERVIEW</p><h1>A clear view of your day.</h1><p>Requests to review, work to prepare, and the next step forward.</p></div><button className="primary" onClick={onQuote}><Plus size={16} /> New quotation</button></div>
-    {!preview && <><EmailReport /><TrackingOverview navigate={navigate} /></>}
+    <div className="overview-actions">
+      <button onClick={()=>navigate('calculator')}><FileSpreadsheet size={28}/><strong>Cost calculation</strong><span>Open the cost worksheet</span><ArrowRight size={18}/></button>
+      <button onClick={()=>navigate('calendar-agent')}><CalendarDays size={28}/><strong>My Calendar Agent</strong><span>Ask about meetings and availability</span><ArrowRight size={18}/></button>
+      <button onClick={()=>navigate('customers','new')}><Users size={28}/><strong>Add new customer</strong><span>Create a customer record</span><ArrowRight size={18}/></button>
+      <button onClick={()=>navigate('customers','proposal')}><FileText size={28}/><strong>Create a proposal</strong><span>Choose a customer to begin</span><ArrowRight size={18}/></button>
+    </div>
+    {!preview && <><EmailReport /><TrackingOverview navigate={navigate} /><CorrespondentActivity navigate={navigate} /></>}
     <div className="overview-intro"><div className="intro-icon"><CheckCheck size={24} /></div><div><strong>{pending.length + reviews.length ? `${pending.length + reviews.length} items are waiting for your review` : preview ? 'Your review queue is clear' : 'Your daily workspace'}</strong><p>Start with urgent requests, then move your quotations forward.</p></div><button onClick={() => navigate('inbox')}>Open review queue <ArrowRight size={16} /></button></div>
     <div className="metric-grid"><Metric icon={Inbox} label="Inbox to review" value={preview ? String(pending.length) : 'Open inbox'} detail={preview ? 'Example review queue' : 'Review live messages and drafts'} onClick={() => navigate('inbox')} /><Metric icon={FileText} label="Quotes in progress" value={String(data.quotes.filter(q => q.status !== 'Approved').length)} detail={`${reviews.length} awaiting approval`} onClick={() => navigate('quotes')} /><Metric icon={Wallet} label="Approved value" value={money(approved.reduce((n, q) => n + q.sellingPrice, 0))} detail="CAD · before tax · saved revisions" onClick={() => navigate('quotes')} /><Metric icon={Users} label="Customers" value={String(data.customers.length)} detail="Contacts, sites and proposals" onClick={() => navigate('customers')} /></div>
     <div className="overview-grid"><section className="panel no-pad"><div className="panel-heading padded"><div><p className="eyebrow">FOCUS FIRST</p><h2>Needs your attention</h2></div><button className="text-button" onClick={() => navigate('inbox')}>View inbox <ArrowUpRight size={15} /></button></div><div className="attention-list">{pending.slice().sort((a, b) => Number(b.urgent) - Number(a.urgent)).slice(0, 4).map(m => <button key={m.id} className="attention-item" onClick={() => navigate('inbox', m.id)}><div className={`attention-icon ${m.urgent ? 'urgent' : ''}`}><Mail size={17} /></div><div><div className="attention-title"><strong>{m.from}</strong><span className={`pill ${m.urgent ? 'red' : 'neutral'}`}>{m.urgent ? 'Urgent' : m.category}</span></div><p>{m.subject}</p></div><ArrowUpRight size={16} /></button>)}{!pending.length && <div className="empty-state"><Check size={26} /><p>{preview ? 'No emails waiting for review.' : 'Open the inbox to review live messages and saved drafts.'}</p></div>}</div></section>

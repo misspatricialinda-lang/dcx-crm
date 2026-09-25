@@ -22,6 +22,7 @@ export function EmailReport() {
     {!r&&!error&&<p role="status">Loading email performance…</p>}
     {r&&<>
       <p className="small muted">{data.mailbox.address} · Last sync: {data.mailbox.last_synced_at?new Date(data.mailbox.last_synced_at).toLocaleString():'Not synced'}</p>
+      <p className="small muted">These totals cover this connected mailbox. The conversation list and contact activity include stored history from other mailboxes.</p>
       {(complete?.length!==2||complete.some((f:any)=>!f.backfill_complete||f.last_error))&&<p className="notice amber">Counts may be incomplete. Finish syncing Inbox and Sent mail; check folder errors below.</p>}
       <div className="metric-grid">{[['Received',r.received],['Sent',r.sent],['Conversations replied',`${r.conversations_replied} / ${r.conversations_received}`],['Reply rate',r.reply_rate===null?'—':`${r.reply_rate}%`]].map(([label,value])=><div className="metric-card" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
       <p className="small muted">Reply rate = conversations received in this period with a later sent message, divided by conversations received. Average first response: {r.average_response_minutes===null?'no replies yet':`${r.average_response_minutes} minutes`}. These are sent-copy counts, not delivery or read receipts.</p>
