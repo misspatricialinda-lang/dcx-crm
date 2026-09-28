@@ -1,0 +1,20 @@
+﻿{
+    "version":  "v0.1.0",
+    "created_at":  "2026-09-27T03:58:25.7302510Z",
+    "note":  "Baseline of the three current local workflow files before deployment; live n8n may differ.",
+    "deployment_status":  "local snapshot only; n8n import and publish must be verified separately",
+    "files":  [
+                  {
+                      "file":  "workflow 1.json",
+                      "sha256":  "c8f0efa78ad88e120b9bb7d1dcf30e7dd6c329831e4836116c55f4ad42ddf56b"
+                  },
+                  {
+                      "file":  "workflow 2 - draft actions.json",
+                      "sha256":  "186ab1e4c5785478fa943110f0167c76e9a7afefbb07dd3526f4f5ba5f38471d"
+                  },
+                  {
+                      "file":  "workflow 3 - send reply.json",
+                      "sha256":  "7efcdbe46031c905a9b715f6b379bc81221cfac212f33d5ddf2e14d9748a4b96"
+                  }
+              ]
+}

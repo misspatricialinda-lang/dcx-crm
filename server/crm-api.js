@@ -7,11 +7,11 @@ import { validateProposal } from './proposal-model.js';
 
 const respond = (res, status, data) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); };
 const equal = (a, b) => timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
-async function bodyOf(req) {
+async function bodyOf(req, limit = 32768) {
   let raw = '';
   if (req.body !== undefined) raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-  else for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > 32768) throw new Error('Record is too large.'); }
-  if (Buffer.byteLength(raw) > 32768) throw new Error('Record is too large.');
+  else for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > limit) throw new Error('Record is too large.'); }
+  if (Buffer.byteLength(raw) > limit) throw new Error('Record is too large.');
   return JSON.parse(raw || '{}');
 }
 async function allRows(db, entity, customerId) {
@@ -33,7 +33,8 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
   const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
   const automation = action === 'lookup' && req.method === 'GET' && (env.AUTOMATION_API_TOKEN || '').length >= 32 && equal(token, env.AUTOMATION_API_TOKEN);
   if (!automation && !getSession(req, configuration(env))) return respond(res, 401, { error: 'Please sign in to access customer records.' });
-  if (!['GET', 'POST', 'PATCH'].includes(req.method)) return respond(res, 405, { error: 'Method not allowed.' });
+  if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return respond(res, 405, { error: 'Method not allowed.' });
+  if (req.method === 'DELETE' && action !== 'quotations') return respond(res, 405, { error: 'Method not allowed.' });
   if (req.method !== 'GET') {
     const origin = `${process.env.NODE_ENV === 'production' ? 'https' : 'http'}://${req.headers.host}`;
     if (req.headers.origin !== origin || req.headers['sec-fetch-site'] === 'cross-site') return respond(res, 403, { error: 'Request origin is not allowed.' });
@@ -41,6 +42,35 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
   if (!injectedDb && (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY)) return respond(res, 503, { error: 'Supabase is not configured. Follow docs/supabase-setup-guide.md.', code: 'NOT_CONFIGURED' });
   try {
     const db = injectedDb || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    if(action==='quotations') {
+      const checked=async q=>{const {data,error}=await q;if(error){const e=new Error(error.message);e.code=error.code;throw e;}return data;};
+      const customerId=url.searchParams.get('customer_id');
+      if(!uuid(customerId))return respond(res,400,{error:'Select a customer.'});
+      if(req.method==='GET') {
+        const records=await checked(db.from('crm_quotations').select('*,items:crm_quotation_items(*)').eq('customer_id',customerId).is('deleted_at',null).order('created_at',{ascending:false}).limit(200));
+        return respond(res,200,{records:records.map(q=>({...q,items:(q.items||[]).sort((a,b)=>a.position-b.position)}))});
+      }
+      let input;
+      try{input=await bodyOf(req,1024*1024);}catch(e){return respond(res,400,{error:e.message});}
+      if(req.method==='DELETE') {
+        if(!uuid(input.id)||!Number.isSafeInteger(input.version)||input.version<1)return respond(res,400,{error:'Reload the quotation before deleting.'});
+        const deleted=await checked(db.rpc('crm_delete_quotation',{p_customer_id:customerId,p_quotation_id:input.id,p_version:input.version}));
+        return deleted?respond(res,200,{deleted:true}):respond(res,409,{error:'Quotation changed or was already deleted. Reload it.'});
+      }
+      const validQuantity=value=>/^\d{1,9}(\.\d{1,3})?$/.test(String(value));
+      const validPrice=value=>/^\d{1,10}(\.\d{1,2})?$/.test(String(value));
+      if(!Array.isArray(input.items)||input.items.length<1||input.items.length>500||
+        input.items.some(i=>!i||typeof i.product_service!=='string'||!i.product_service.trim()||i.product_service.length>200||
+          typeof i.description!=='string'||i.description.length>2000||!validQuantity(i.quantity)||Number(i.quantity)<=0||!validPrice(i.unit_price))||
+        typeof input.address_1!=='string'||input.address_1.length>1000||
+        (req.method==='PATCH'&&(!uuid(input.id)||!Number.isSafeInteger(input.version)||input.version<1)))
+        return respond(res,400,{error:'Enter a valid address and at least one complete quotation row.'});
+      if(req.method==='POST'&&input.id)return respond(res,400,{error:'New quotations cannot specify an ID.'});
+      const quoteId=await checked(db.rpc('crm_save_quotation',{p_customer_id:customerId,p_quotation_id:req.method==='PATCH'?input.id:null,p_version:req.method==='PATCH'?input.version:null,p_address_1:input.address_1,p_items:input.items.map(i=>({product_service:i.product_service,description:i.description,quantity:String(i.quantity),unit_price:String(i.unit_price)})),p_issue:input.issue===true}));
+      const record=await checked(db.from('crm_quotations').select('*,items:crm_quotation_items(*)').eq('id',quoteId).single());
+      record.items.sort((a,b)=>a.position-b.position);
+      return respond(res,req.method==='POST'?201:200,{record});
+    }
     if(action==='proposals') {
       const checked=async q=>{const {data,error}=await q;if(error)throw error;return data;};
       if(req.method==='GET') {
@@ -129,5 +159,12 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
     }
     if (!data) return respond(res, 409, { error: 'This record changed elsewhere. Close the form, refresh, and try again.' });
     return respond(res, req.method === 'POST' ? 201 : 200, { record: data });
-  } catch(error) { return respond(res, 502, { error: action==='proposals'&&['42P01','PGRST205'].includes(error.code)?'Run supabase/migrations/202609240001_reporting_and_proposals.sql in Supabase SQL Editor first.':'Database unavailable. Check the server connection and apply the workspace migrations. No local fallback was saved.' }); }
+  } catch(error) {
+    if (action === 'quotations') {
+      if (['42P01','42883','PGRST202','PGRST205'].includes(error.code)) return respond(res,503,{error:'Apply supabase/migrations/202609270001_customer_quotations.sql in Supabase SQL Editor first.'});
+      if (String(error.message).startsWith('Quotation changed')) return respond(res,409,{error:error.message});
+      if (['Add 1 to 500 quotation rows','Invalid quotation row','Customer not found'].some(message=>String(error.message).startsWith(message))) return respond(res,400,{error:error.message});
+    }
+    return respond(res, 502, { error: action==='proposals'&&['42P01','PGRST205'].includes(error.code)?'Run supabase/migrations/202609240001_reporting_and_proposals.sql in Supabase SQL Editor first.':'Database unavailable. Check the server connection and apply the workspace migrations. No local fallback was saved.' });
+  }
 }

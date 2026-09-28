@@ -10,6 +10,30 @@ import { normalizeMessage, validateWorkflow, pageCursor, encodeCursor } from '..
 
 const mailbox='11111111-1111-4111-8111-111111111111';
 const sample=(id,extra={})=>({ id,conversationId:'conversation-1',subject:'Battery replacement',from:{emailAddress:{address:'Sam@Example.com'}},toRecipients:[{emailAddress:{address:'sales@example.com'}}],receivedDateTime:'2026-09-23T10:00:00Z',bodyPreview:'Please quote',isDraft:false,...extra });
+
+test('application-credential Outlook sync resumes the durable delta checkpoint', async t => {
+  const pg=new PGlite();t.after(()=>pg.close());
+  await pg.exec('create role anon; create role authenticated; create role service_role;');
+  for(const migration of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql']) await pg.exec(await readFile(new URL('../supabase/migrations/'+migration,import.meta.url),'utf8'));
+  const env={APP_LOGIN_EMAIL:'owner@example.com',APP_LOGIN_PASSWORD:'long-test-password',APP_SESSION_SECRET:'s'.repeat(40),MAIL_PROVIDER:'microsoft',MICROSOFT_TENANT_ID:'tenant-sync',MICROSOFT_CLIENT_ID:'client-sync',MICROSOFT_CLIENT_SECRET:'test-secret',MICROSOFT_MAILBOX:'sales@example.com'};
+  const checkpoint='https://graph.microsoft.com/v1.0/users/sales%40example.com/mailFolders/inbox/messages/delta?$deltatoken=checkpoint';
+  const paths=[];
+  t.mock.method(globalThis,'fetch',async url=>{
+    if(String(url).startsWith('https://login.microsoftonline.com/'))return Response.json({access_token:'test-token',expires_in:3600});
+    paths.push(String(url));
+    return Response.json({value:[sample('app-sync')],'@odata.deltaLink':checkpoint});
+  });
+  const cookie='dcx_session='+createSession({email:env.APP_LOGIN_EMAIL,password:env.APP_LOGIN_PASSWORD,secret:env.APP_SESSION_SECRET});
+  for(let i=0;i<2;i++){
+    let result;const res={statusCode:200,setHeader(){},end(raw){result=JSON.parse(raw);}};
+    await trackingHandler({url:'/?action=sync',method:'POST',headers:{cookie,host:'localhost',origin:'http://localhost'},body:{folder:'inbox'}},res,env,{db:trackingDb(pg)});
+    assert.equal(res.statusCode,200,JSON.stringify(result));
+  }
+  assert.match(paths[0],/messages\/delta\?/);
+  assert.equal(paths[1],checkpoint);
+  assert.equal((await pg.query('select count(*)::int n from email_messages')).rows[0].n,1);
+  assert.equal((await pg.query('select cursor_url from email_sync_cursors')).rows[0].cursor_url,checkpoint);
+});
 test('provider-neutral identity: signed Hostinger references rotate without duplicating messages; subjects are not identity',()=>{
   const locator=(uid,exp)=>Buffer.from(JSON.stringify({kind:'message',folder:'INBOX',uid,exp})).toString('base64url')+'.signature';
   const a=normalizeMessage(sample(locator(5,1)),'hostinger','sales@example.com');

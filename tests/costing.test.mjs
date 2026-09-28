@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { calculateCost, bookUsable } from '../src/lib/costing.ts';
+import { calculateCost, bookUsable, cadQuote, newDraft } from '../src/lib/costing.ts';
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/cost-workbook.json', import.meta.url)));
 const input = () => structuredClone(fixture.input);
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`);
 
 test('matches the original XLS cached totals, including manual overrides', () => {
   const result = calculateCost(input()); assert.equal(result.valid, true);
-  for (const [key, value] of Object.entries(fixture.expected)) close(result[key], value);
+  const { usdSellingPrice: _legacyOutput, ...cadExpected } = fixture.expected;
+  for (const [key, value] of Object.entries(cadExpected)) close(result[key], value);
   close(result.sellingPrice, 363.6363636363636); close(result.totalCost, 200);
 });
 test('uses gross margin, not markup on cost', () => {
@@ -22,9 +23,21 @@ test('formula-driven mileage preserves fractional unit precision', () => {
   const v = input(); v.lines.forEach(l => l.quantity = 0); v.lines[3].quantity = 100;
   const r = calculateCost(v); close(r.totalCost, 54.12); close(r.sellingPrice, 66);
 });
-test('divides input currency but multiplies USD output', () => {
+test('supplier exchange conversion retains the underlying CAD cost without a USD output', () => {
   const v = input(); v.lines[0].exchangeRate = .8; v.usdRate = .75;
-  const r = calculateCost(v); close(r.totalCost, 250); close(r.usdSellingPrice, 250 / .55 * .75);
+  const r = calculateCost(v); close(r.totalCost, 250); close(r.sellingPrice, 250 / .55);
+  assert.equal('usdSellingPrice' in r, false);
+});
+
+test('legacy currency selections normalize to CAD without changing saved amounts or the original record', () => {
+  const old = {...input(), currency:'USD', usdRate:0, id:'saved-quote', sellingPrice:400};
+  const normalized = cadQuote(old);
+  assert.equal(normalized.currency, 'CAD');
+  assert.equal('usdRate' in normalized, false);
+  assert.equal(normalized.sellingPrice, 400);
+  assert.equal(normalized.id, old.id);
+  assert.equal(calculateCost(normalized).cadTotal, calculateCost(old).cadTotal);
+  assert.equal(old.currency, 'USD');
 });
 test('shipping and brokerage reduce profit without automatically changing selling price', () => {
   const v = input(); v.shipping = 50; v.brokerage = 25; const r = calculateCost(v);
@@ -50,4 +63,13 @@ test('rate approval honors status and inclusive effective dates', () => {
   const b = { status: 'Published', effectiveFrom: '2026-09-01', effectiveTo: '2026-09-30' };
   assert.equal(bookUsable(b, '2026-09-16'), true); assert.equal(bookUsable(b, '2026-09-30'), true);
   assert.equal(bookUsable(b, '2026-10-01'), false); assert.equal(bookUsable({ ...b, status: 'Draft' }, '2026-09-16'), false);
+});
+test('new Standard and BGIS sheets use their own saved percentages', () => {
+  const row = {id:'labor',supplier:'DCX',description:'Labor',unit:'hour',supplierCost:0,multiplier:1,manualCost:100,costMode:'manual',exchangeRate:1,margin:.25};
+  const standard = newDraft({id:'standard',version:2,items:[row],taxPercent:13});
+  const bgis = newDraft({id:'bgis',version:4,items:[{...row,margin:.4,manualCost:80}],taxPercent:5});
+  assert.equal(standard.lines[0].margin,.25);
+  assert.equal(bgis.lines[0].margin,.4);
+  assert.equal(standard.taxPercent,13);
+  assert.equal(bgis.taxPercent,5);
 });

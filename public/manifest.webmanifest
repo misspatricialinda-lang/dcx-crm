@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "DCX Operations",
+  "short_name": "DCX",
+  "start_url": "/#dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f8f8",
+  "theme_color": "#172634",
+  "icons": [
+    { "src": "/icons/dcx-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/dcx-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

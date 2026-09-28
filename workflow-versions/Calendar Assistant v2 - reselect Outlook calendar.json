@@ -1,0 +1,303 @@
+{
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "public":  true,
+                                         "initialMessages":  "Hi there! 👋\nI am your Calender Agent?",
+                                         "options":  {
+                                                         "allowedOrigins":  "*",
+                                                         "subtitle":  "Ask about your schedule, book meetings, or reschedule events.",
+                                                         "title":  "Calendar Assistant",
+                                                         "responseMode":  "streaming"
+                                                     }
+                                     },
+                      "id":  "1fcede88-f55b-4a5c-9b35-396ca938c2e0",
+                      "name":  "Chat Trigger",
+                      "type":  "@n8n/n8n-nodes-langchain.chatTrigger",
+                      "typeVersion":  1.5,
+                      "position":  [
+                                       0,
+                                       0
+                                   ],
+                      "webhookId":  "bca2dd48-ecb0-49b9-b60a-bb87d9824cdc"
+                  },
+                  {
+                      "parameters":  {
+                                         "options":  {
+                                                         "systemMessage":  "You are the user\u0027s Outlook calendar assistant. Use the America/Toronto time zone so daylight saving time is handled automatically.\n\nUse get_events to answer schedule questions and to find an event before updating or deleting it. Convert relative dates such as \"tomorrow\" or \"this week\" into the correct date range.\n\nUse create_event to add an event. Add a location or description only if the user provides it.\n\nFor updates and deletions, use an event ID returned by get_events. If more than one event matches, ask one short question to identify the right event.\n\nSend all tool dates and times in ISO 8601 format.\n\nKeep replies direct:\n- For no events: \"No events this week.\"\n- For a list: show only date, time, and title, one event per line.\n- After a change: confirm only the title, date, and time.\n- Do not describe your tool use, repeat the time zone, claim the user is available, or add a follow-up question unless information is needed.\n- Do not use the em dash character."
+                                                     }
+                                     },
+                      "id":  "7905e710-08fa-4037-b504-ed25653bbbc5",
+                      "name":  "Calendar Agent",
+                      "type":  "@n8n/n8n-nodes-langchain.agent",
+                      "typeVersion":  3.1,
+                      "position":  [
+                                       480,
+                                       0
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "model":  {
+                                                       "__rl":  true,
+                                                       "mode":  "list",
+                                                       "value":  "gpt-5-mini",
+                                                       "cachedResultName":  "gpt-5-mini"
+                                                   },
+                                         "builtInTools":  {
+
+                                                          },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "af577f77-ca5f-4928-a89d-2b8bf7ba89fc",
+                      "name":  "OpenAI Model",
+                      "type":  "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       224,
+                                       224
+                                   ],
+                      "credentials":  {
+                                          "openAiApi":  {
+                                                            "id":  null,
+                                                            "name":  "Gateway credits",
+                                                            "__aiGatewayManaged":  true
+                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "contextWindowLength":  20
+                                     },
+                      "id":  "e45f0442-b577-4de2-b52c-7043e17161b2",
+                      "name":  "Chat Memory",
+                      "type":  "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+                      "typeVersion":  1.4,
+                      "position":  [
+                                       352,
+                                       256
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "event",
+                                         "includeRecurringInstances":  true,
+                                         "startDateTime":  "={{ $fromAI(\u0027start\u0027, \u0027Start of the date range to look up, ISO 8601. For \"this week\" use the most recent Monday 00:00; for \"today\" use start of today; for a named date use start of that day. Default: start of today.\u0027, \u0027string\u0027, $now.startOf(\u0027day\u0027).toISO()) }}",
+                                         "endDateTime":  "={{ $fromAI(\u0027end\u0027, \u0027End of the date range to look up, ISO 8601. For \"this week\" use the coming Sunday 23:59; otherwise default to 14 days after the start. The range can extend as far into the future as the user asks.\u0027, \u0027string\u0027, $now.plus({ days: 14 }).toISO()) }}",
+                                         "limit":  50,
+                                         "calendarId":  {
+                                                            "__rl":  true,
+                                                            "value":  "",
+                                                            "mode":  "list"
+                                                        },
+                                         "fromAllCalendars":  false
+                                     },
+                      "id":  "d01b651b-845f-4484-9542-b9387be79a3f",
+                      "name":  "get_events",
+                      "type":  "n8n-nodes-base.microsoftOutlookTool",
+                      "typeVersion":  2,
+                      "position":  [
+                                       480,
+                                       224
+                                   ],
+                      "webhookId":  "2cbb590e-a215-4d2c-96f6-4e5e30974a81",
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "MiaNT3d34K2LD3Nb",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "event",
+                                         "operation":  "create",
+                                         "subject":  "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI(\u0027subject\u0027, \u0027Title of the event\u0027) }}",
+                                         "startDateTime":  "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI(\u0027start\u0027, \u0027Start datetime in ISO 8601 (Eastern Time, America/Toronto local time)\u0027) }}",
+                                         "endDateTime":  "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI(\u0027end\u0027, \u0027End datetime in ISO 8601 (Eastern Time, America/Toronto local time). Default to 1 hour after start if not specified.\u0027) }}",
+                                         "additionalFields":  {
+                                                                  "body":  "={{ (() =\u003e { const v = $fromAI(\u0027description\u0027, \u0027Description/notes for the event. LEAVE THIS PARAMETER UNSET/OMITTED when the user gives no description.\u0027); return v ? v : undefined; })() }}",
+                                                                  "location":  "={{ (() =\u003e { const v = $fromAI(\u0027location\u0027, \u0027Location of the event. LEAVE THIS PARAMETER UNSET/OMITTED when the user gives no location.\u0027); return v ? v : undefined; })() }}",
+                                                                  "timeZone":  "America/Toronto"
+                                                              },
+                                         "calendarId":  {
+                                                            "__rl":  true,
+                                                            "value":  "",
+                                                            "mode":  "list"
+                                                        }
+                                     },
+                      "id":  "354033e6-3f0d-483e-98de-545bddac51ed",
+                      "name":  "create_event",
+                      "type":  "n8n-nodes-base.microsoftOutlookTool",
+                      "typeVersion":  2,
+                      "position":  [
+                                       608,
+                                       224
+                                   ],
+                      "webhookId":  "20c8ebb7-2f08-4fa4-8e2d-cb3cbd7211b1",
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "MiaNT3d34K2LD3Nb",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "event",
+                                         "operation":  "update",
+                                         "eventId":  {
+                                                         "__rl":  true,
+                                                         "value":  "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI(\u0027Event\u0027, ``, \u0027string\u0027) }}",
+                                                         "mode":  "id"
+                                                     },
+                                         "additionalFields":  {
+                                                                  "end":  "={{ (() =\u003e { const v = $fromAI(\u0027new_end\u0027, \u0027New end datetime in ISO 8601 (Eastern Time, America/Toronto local time). LEAVE UNSET if unchanged.\u0027); return v ? v : undefined; })() }}",
+                                                                  "location":  "={{ (() =\u003e { const v = $fromAI(\u0027location\u0027, \u0027New location. LEAVE UNSET if unchanged.\u0027); return v ? v : undefined; })() }}",
+                                                                  "start":  "={{ (() =\u003e { const v = $fromAI(\u0027new_start\u0027, \u0027New start datetime in ISO 8601 (Eastern Time, America/Toronto local time). LEAVE UNSET if unchanged.\u0027); return v ? v : undefined; })() }}",
+                                                                  "timeZone":  "America/Toronto",
+                                                                  "subject":  "={{ (() =\u003e { const v = $fromAI(\u0027subject\u0027, \u0027New title for the event. LEAVE UNSET to keep unchanged.\u0027); return v ? v : undefined; })() }}"
+                                                              },
+                                         "calendarId":  {
+                                                            "__rl":  true,
+                                                            "value":  "",
+                                                            "mode":  "list"
+                                                        }
+                                     },
+                      "id":  "97f468e0-3890-4edf-ac89-36838ff17921",
+                      "name":  "update_event",
+                      "type":  "n8n-nodes-base.microsoftOutlookTool",
+                      "typeVersion":  2,
+                      "position":  [
+                                       736,
+                                       224
+                                   ],
+                      "webhookId":  "fc1a0f0d-4213-4552-b4f1-a074953b3eb6",
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "MiaNT3d34K2LD3Nb",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "event",
+                                         "operation":  "delete",
+                                         "eventId":  {
+                                                         "__rl":  true,
+                                                         "mode":  "id",
+                                                         "value":  "={{ $fromAI(\u0027event_id\u0027, \u0027The id of the event to delete, taken from get_events results\u0027) }}"
+                                                     },
+                                         "calendarId":  {
+                                                            "__rl":  true,
+                                                            "value":  "",
+                                                            "mode":  "list"
+                                                        }
+                                     },
+                      "id":  "7522b133-1470-4595-986d-ad695dc8b34e",
+                      "name":  "delete_event",
+                      "type":  "n8n-nodes-base.microsoftOutlookTool",
+                      "typeVersion":  2,
+                      "position":  [
+                                       864,
+                                       224
+                                   ],
+                      "webhookId":  "1bf6459c-e0ac-40f5-a2ee-0f10dc09c379",
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "MiaNT3d34K2LD3Nb",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Chat Trigger":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Calendar Agent",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "OpenAI Model":  {
+                                             "ai_languageModel":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Calendar Agent",
+                                                                              "type":  "ai_languageModel",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                         },
+                        "Chat Memory":  {
+                                            "ai_memory":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Calendar Agent",
+                                                                      "type":  "ai_memory",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                        },
+                        "get_events":  {
+                                           "ai_tool":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Calendar Agent",
+                                                                   "type":  "ai_tool",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                       },
+                        "create_event":  {
+                                             "ai_tool":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Calendar Agent",
+                                                                     "type":  "ai_tool",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                         },
+                        "update_event":  {
+                                             "ai_tool":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Calendar Agent",
+                                                                     "type":  "ai_tool",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                         },
+                        "delete_event":  {
+                                             "ai_tool":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Calendar Agent",
+                                                                     "type":  "ai_tool",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                         }
+                    },
+    "pinData":  {
+
+                },
+    "meta":  {
+                 "templateCredsSetupCompleted":  true,
+                 "instanceId":  "b3f9dc4f71c1242b2d828afd78c4a38d2ec388931ede06022f9683616b9249bf"
+             }
+}

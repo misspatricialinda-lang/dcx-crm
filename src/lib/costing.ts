@@ -1,7 +1,7 @@
 import type { CostInput, CostLine, PriceBook, QuoteDraft } from '../types/operations';
 
 export const FORMULA_VERSION = 'job-cost-v1';
-export const money = (v: number, currency = 'CAD') => new Intl.NumberFormat('en-CA', { style: 'currency', currency, maximumFractionDigits: 2 }).format(v);
+export const money = (v: number) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 2 }).format(v);
 export const roundMoney = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
 export function calculateCost(input: CostInput) {
   const errors: string[] = [];
@@ -22,7 +22,7 @@ export function calculateCost(input: CostInput) {
     return { ...line, unitCost, extendedCost, cadCost, sell, profit: sell - cadCost };
   });
   for (const flat of input.flatLines) { nonnegative(flat.amount, 'Flat amount'); nonnegative(flat.addition, 'Flat addition'); }
-  nonnegative(input.shipping, 'Shipping'); nonnegative(input.brokerage, 'Brokerage'); nonnegative(input.usdRate, 'USD conversion rate');
+  nonnegative(input.shipping, 'Shipping'); nonnegative(input.brokerage, 'Brokerage');
   if (!Number.isFinite(input.taxPercent) || input.taxPercent < 0 || input.taxPercent > 100) errors.push('Tax must be between 0% and 100%.');
   const flatSelling = input.flatLines.reduce((sum, f) => sum + f.amount + f.addition, 0); // M22/23 = D + F; quantity unused in original.
   const totalCost = lines.reduce((sum, line) => sum + line.cadCost, 0) + input.shipping + input.brokerage; // E29
@@ -31,9 +31,14 @@ export function calculateCost(input: CostInput) {
   const grossMargin = sellingPrice > 0 ? profit / sellingPrice : null; // L33, guard empty estimate.
   const tax = roundMoney(sellingPrice * input.taxPercent / 100); // Explicit dashboard extension, not in workbook.
   const cadTotal = roundMoney(sellingPrice + tax);
-  const usdSellingPrice = sellingPrice * input.usdRate; // L35 = E31 * F35
-  if (![totalCost, sellingPrice, profit, cadTotal, usdSellingPrice].every(Number.isFinite)) errors.push('The estimate cannot be calculated until all inputs are valid.');
-  return { lines, totalCost, sellingPrice, flatSelling, profit, grossMargin, tax, cadTotal, usdSellingPrice, errors, valid: errors.length === 0 };
+  if (![totalCost, sellingPrice, profit, cadTotal].every(Number.isFinite)) errors.push('The estimate cannot be calculated until all inputs are valid.');
+  return { lines, totalCost, sellingPrice, flatSelling, profit, grossMargin, tax, cadTotal, errors, valid: errors.length === 0 };
+}
+// Older browser workspaces may still contain an output-currency selection.
+// Costs and totals were always stored in CAD, so no amount conversion is needed.
+export function cadQuote<T extends QuoteDraft>(quote: T): T {
+  const { usdRate: _legacyRate, ...rest } = quote as T & { usdRate?: number };
+  return { ...rest, currency: 'CAD' } as T;
 }
 export const today = () => new Date().toISOString().slice(0, 10);
 export function bookUsable(book: PriceBook, date = today()) {
@@ -44,6 +49,6 @@ export function lineFromRate(rate: PriceBook['items'][number], quantity = 0): Co
 }
 export function newDraft(book: PriceBook, customerId = '', site = ''): QuoteDraft {
   return { customerId, site, title: 'UPS maintenance and battery services', bookId: book.id, bookVersion: book.version,
-    lines: book.items.map(r => lineFromRate(r)), flatLines: [], shipping: 0, brokerage: 0, usdRate: 0,
-    taxPercent: 0, notes: '', validityDays: 30, currency: 'CAD' };
+    lines: book.items.map(r => lineFromRate(r)), flatLines: [], shipping: 0, brokerage: 0,
+    taxPercent: book.taxPercent ?? 0, notes: '', validityDays: 30, currency: 'CAD' };
 }

@@ -1,6 +1,6 @@
 import { INITIAL_CUSTOMERS, INITIAL_EMAIL_LOGS } from './mockData';
 import type { Workspace, RateItem, PriceBook } from '../types/operations';
-import { today } from './costing';
+import { today, cadQuote } from './costing';
 
 const at = new Date().toISOString();
 const rate = (id: string, description: string, supplier: string, unit: string, supplierCost: number, multiplier: number, manualCost: number, margin: number, sourceRow: number, costMode: 'manual' | 'multiplier' = 'manual'): RateItem => ({ id, description, supplier, unit, supplierCost, multiplier, manualCost, margin, sourceRow, costMode, exchangeRate: 1 });
@@ -39,7 +39,7 @@ export const STORAGE_KEY = 'dcx-workspace-v1';
 export function loadWorkspace(): { data: Workspace; error: string } {
   try { const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return { data: initialWorkspace(), error: '' };
     const data = JSON.parse(raw); if (data.version !== 1 || !Array.isArray(data.books) || !data.books.length || !Array.isArray(data.customers) || !Array.isArray(data.emails) || !Array.isArray(data.quotes) || !Array.isArray(data.tenders) || !Array.isArray(data.activity) || !Array.isArray(data.bookHistory)) throw new Error();
-    return { data, error: '' };
+    return { data: { ...data, draft: data.draft ? cadQuote(data.draft) : null, quotes: data.quotes.map(cadQuote) }, error: '' };
   } catch { return { data: initialWorkspace(), error: 'Saved workspace could not be read. Your stored copy has not been replaced. Export or recover it before continuing.' }; }
 }
 export function downloadJson(name: string, data: unknown) {

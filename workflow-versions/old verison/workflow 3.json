@@ -1,0 +1,909 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3136,
+        368
+      ],
+      "id": "c3e83111-7979-4a5e-8502-8710e75849ef",
+      "name": "Called by Workflow 2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$json; const uuid=/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i; const a=x.attachments||[]; const valid=x.action==='send'&&uuid.test(x.thread_id||'')&&uuid.test(x.draft_id||'')&&Number.isInteger(Number(x.draft_revision))&&Array.isArray(a)&&a.length<=5&&a.every(f=>f&&typeof f.name==='string'&&f.name.length>0&&f.name.length<=200&&typeof f.content_base64==='string'&&/^[A-Za-z0-9+/]*={0,2}$/.test(f.content_base64)&&typeof f.content_type==='string')&&a.reduce((n,f)=>n+f.content_base64.length,0)<=4*1024*1024; return [{json:{...x,valid,attachments:a,error:valid?null:'Invalid send request or attachments'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2912,
+        368
+      ],
+      "id": "5b81bad4-1d46-4ee4-951c-92145f393874",
+      "name": "Validate Send Input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "708d6046-bf76-4bc5-8e12-c33929d439c3",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2688,
+        368
+      ],
+      "id": "e641f2a0-15df-46c7-901c-ca4979255913",
+      "name": "Input Valid"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,action:'send',http_status:400,error:$json.error||'Invalid send request'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2464,
+        592
+      ],
+      "id": "e7065dde-e2f0-45c5-bf97-4acb8704417e",
+      "name": "Reject Invalid Input"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH claim AS (\n UPDATE email_drafts d SET status='sending', updated_at=now()\n WHERE d.id=$1::uuid AND d.thread_id=$2::uuid AND d.revision=$3::integer\n   AND d.status IN ('editing','approved') AND nullif(trim(d.current_body),'') IS NOT NULL\n   AND EXISTS (SELECT 1 FROM email_messages m WHERE m.id=d.reply_to_message_id AND nullif(m.provider_ref,'') IS NOT NULL)\n   AND EXISTS (SELECT 1 FROM email_threads t JOIN email_mailboxes mb ON mb.id=t.mailbox_id WHERE t.id=d.thread_id AND nullif(mb.address,'') IS NOT NULL)\n RETURNING d.*\n)\nSELECT claim.id AS draft_id, claim.thread_id, claim.revision, claim.current_body,\n claim.subject, claim.to_addresses, claim.reply_to_message_id,\n m.provider_ref AS reply_provider_ref, t.mailbox_id, mb.address AS mailbox_address\nFROM (SELECT 1) one LEFT JOIN claim ON true\nLEFT JOIN email_messages m ON m.id=claim.reply_to_message_id\nLEFT JOIN email_threads t ON t.id=claim.thread_id\nLEFT JOIN email_mailboxes mb ON mb.id=t.mailbox_id;",
+        "options": {
+          "queryReplacement": "={{ $('Validate Send Input').first().json.draft_id }}, {{ $('Validate Send Input').first().json.thread_id }}, {{ $('Validate Send Input').first().json.draft_revision }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -2464,
+        288
+      ],
+      "id": "a4110fd1-0a41-4cd0-bf2f-f38ab050c2d3",
+      "name": "Claim Draft for Send",
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "858b71db-3297-44dd-9543-89d0c2e93ba3",
+              "leftValue": "={{ !!$json.draft_id && !!$json.reply_provider_ref && !!$json.mailbox_address }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2256,
+        288
+      ],
+      "id": "2f6c9c18-f91c-454a-acd1-5922c11a28e0",
+      "name": "Draft Claimed"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,action:'send',http_status:409,error:'Draft is not editable, has changed, or has no Outlook reply target. Check its status before retrying.'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2032,
+        528
+      ],
+      "id": "499aff58-f263-4a43-8dd1-cb7b40f989d7",
+      "name": "Reject Unsendable Draft"
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Claim Draft for Send').first().json.reply_provider_ref }}"
+        },
+        "replyToSenderOnly": true,
+        "message": "={{ $('Claim Draft for Send').first().json.current_body }}",
+        "additionalFields": {
+          "bodyContentType": "Text",
+          "toRecipients": "={{ ($('Claim Draft for Send').first().json.to_addresses || []).join(',') }}"
+        },
+        "options": {
+          "saveAsDraft": true
+        }
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -2032,
+        192
+      ],
+      "id": "e792291f-8111-4706-8ae4-e64b767ff9d8",
+      "name": "Create Outlook Reply Draft",
+      "webhookId": "75648091-2c8d-4103-b86a-caea6186d531",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f3ef037b-162a-4916-85ad-500b04f42271",
+              "leftValue": "={{ ($('Validate Send Input').first().json.attachments || []).length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1808,
+        192
+      ],
+      "id": "9ec3ab45-ade2-4e6d-8358-71f6d7ae565c",
+      "name": "Has Uploaded Files"
+    },
+    {
+      "parameters": {
+        "jsCode": "const a=$('Validate Send Input').first().json.attachments; return a.map((f,i)=>({json:{index:i,name:f.name},binary:{data:{data:f.content_base64,mimeType:f.content_type||'application/octet-stream',fileName:f.name}}}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        64
+      ],
+      "id": "4387fb6c-2bb0-48fe-95e3-aa57862a6d8d",
+      "name": "Build Binary Attachments"
+    },
+    {
+      "parameters": {
+        "resource": "messageAttachment",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create Outlook Reply Draft').first().json.id }}"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -1376,
+        64
+      ],
+      "id": "5ace90e1-2775-4bdb-b892-2e27435830df",
+      "name": "Attach File to Outlook Draft",
+      "webhookId": "eeb8aea5-1af4-4f5f-9de7-9fcf5a9b138f",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const expected=$('Validate Send Input').first().json.attachments.length; const actual=$input.all().length; return [{json:{ready:expected===actual,expected,actual}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        64
+      ],
+      "id": "11ce190d-a0c2-4eba-8ea9-bbfa4b4e4216",
+      "name": "All Attachments Added"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "send",
+        "draftId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create Outlook Reply Draft').first().json.id }}"
+        },
+        "to": "={{ ($('Claim Draft for Send').first().json.to_addresses || []).join(',') }}"
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -928,
+        192
+      ],
+      "id": "98fda52e-a994-4dcc-ab33-d862d2542b22",
+      "name": "Send Outlook Reply Draft",
+      "webhookId": "83bcf0ca-d6cf-4c6b-810d-1b856b04e69f",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH sent AS (\n INSERT INTO email_messages(thread_id,mailbox_id,provider_key,provider_ref,direction,sender,to_addresses,subject,body_text,body_loaded,has_attachments,occurred_at)\n SELECT c.thread_id,c.mailbox_id,'crm-send:'||c.draft_id::text||':'||c.revision::text,$4,'outgoing',c.mailbox_address,c.to_addresses,c.subject,c.current_body,true,$5::boolean,now()\n FROM (SELECT d.id AS draft_id,d.thread_id,d.revision,d.current_body,d.subject,d.to_addresses,t.mailbox_id,mb.address AS mailbox_address\n       FROM email_drafts d JOIN email_threads t ON t.id=d.thread_id JOIN email_mailboxes mb ON mb.id=t.mailbox_id\n       WHERE d.id=$1::uuid AND d.thread_id=$2::uuid AND d.status='sending') c\n ON CONFLICT(mailbox_id,provider_key) DO UPDATE SET body_text=EXCLUDED.body_text RETURNING id,thread_id\n), marked AS (\n UPDATE email_drafts SET status='sent',provider_draft_id=$4,updated_at=now()\n WHERE id=$1::uuid AND status='sending' AND EXISTS(SELECT 1 FROM sent) RETURNING id\n), thread AS (\n UPDATE email_threads SET status='waiting_customer',last_message_at=now(),updated_at=now()\n WHERE id=$2::uuid AND EXISTS(SELECT 1 FROM marked) RETURNING id\n)\nSELECT (SELECT id FROM sent) AS message_id,(SELECT id FROM marked) AS draft_id,(SELECT id FROM thread) AS thread_id;",
+        "options": {
+          "queryReplacement": "={{ $('Claim Draft for Send').first().json.draft_id }}, {{ $('Claim Draft for Send').first().json.thread_id }}, {{ $('Claim Draft for Send').first().json.revision }}, {{ $('Create Outlook Reply Draft').first().json.id }}, {{ $('Validate Send Input').first().json.attachments.length > 0 }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -704,
+        192
+      ],
+      "id": "afe62b9a-68c3-4e74-bd48-7aabfce6609e",
+      "name": "Record Outgoing Email",
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "be763e89-29bf-490d-ac6d-2bf78a0cbc7e",
+              "leftValue": "={{ !!$json.message_id && !!$json.draft_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -496,
+        192
+      ],
+      "id": "cbc1fcc8-9153-49da-b569-92d006feae67",
+      "name": "Outgoing Email Recorded"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$('Record Outgoing Email').first().json; return [{json:{success:true,action:'send',status:'waiting_customer',thread_id:r.thread_id,draft_id:r.draft_id,message_id:r.message_id,...($json.attachment_recording_warning?{warning:'Email sent, but attachment metadata needs checking.'}:{})}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        112
+      ],
+      "id": "f60e9dec-4a52-44c1-8e95-5649ddc8d496",
+      "name": "Return Sent Result"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE email_drafts SET status='editing',updated_at=now() WHERE id=$1::uuid AND status='sending' RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $('Claim Draft for Send').first().json.draft_id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1584,
+        480
+      ],
+      "id": "bc0151f9-d3f8-4301-af88-4b3c6c002799",
+      "name": "Release Unsent Draft",
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,action:'send',http_status:502,error:'Outlook could not prepare the reply. No send was attempted; review the execution before retrying.'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1376,
+        480
+      ],
+      "id": "f43dec2e-75be-4d81-8831-c100959d28d7",
+      "name": "Return Before Send Failure"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE email_drafts SET status='uncertain',updated_at=now() WHERE id=$1::uuid AND status='sending' RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $('Claim Draft for Send').first().json.draft_id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -704,
+        480
+      ],
+      "id": "a38e9a2d-e8ec-41b6-8e65-2ee60b8393ff",
+      "name": "Mark Send Uncertain",
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,action:'send',http_status:502,error:'Outlook send outcome needs checking. Inspect Sent Items before trying again.',send_outcome:'uncertain'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        480
+      ],
+      "id": "ca5cc86a-a17e-47ec-b368-2e256ff1cdea",
+      "name": "Return Uncertain Send"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{success:false,action:'send',http_status:500,error:'Could not claim the draft for sending. Check the Postgres credential and execution.'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2256,
+        672
+      ],
+      "id": "4229a63d-1cb8-479b-9a28-d291d848fad5",
+      "name": "Return Claim Error"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "16b3910b-50ea-4731-bbb8-eb906baea9b3",
+              "leftValue": "={{ $json.ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1040,
+        64
+      ],
+      "id": "6648e041-949a-4a6e-8d4d-2aedbf29d8b5",
+      "name": "All Files Attached"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c8201356-c680-4e8a-9d43-67b47674b55d",
+              "leftValue": "={{ $('Validate Send Input').first().json.attachments.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -272,
+        112
+      ],
+      "id": "75d44b6f-e847-4730-b455-282a45fedc9a",
+      "name": "Has Sent Attachments"
+    },
+    {
+      "parameters": {
+        "jsCode": "const files=$('Validate Send Input').first().json.attachments; const m=$('Record Outgoing Email').first().json; return files.map((f,i)=>({json:{message_id:m.message_id,provider_id:'crm-upload:'+m.draft_id+':'+i,name:f.name,content_type:f.content_type||'application/octet-stream',size_bytes:Math.floor((f.content_base64||'').replace(/=+$/,'').length*3/4)}}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        0
+      ],
+      "id": "bec7059f-45d8-4225-a9f6-544e46cc8cb9",
+      "name": "Build Sent Attachment Records"
+    },
+    {
+      "parameters": {
+        "tableId": "email_attachments",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "message_id",
+              "fieldValue": "={{ $json.message_id }}"
+            },
+            {
+              "fieldId": "provider_id",
+              "fieldValue": "={{ $json.provider_id }}"
+            },
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $json.name }}"
+            },
+            {
+              "fieldId": "content_type",
+              "fieldValue": "={{ $json.content_type }}"
+            },
+            {
+              "fieldId": "size_bytes",
+              "fieldValue": "={{ $json.size_bytes }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        176,
+        0
+      ],
+      "id": "34cfa350-2ca7-464c-9b38-913d21831566",
+      "name": "Record Sent Attachment",
+      "credentials": {
+        "supabaseApi": {
+          "id": "UWlDdtOOI61vsKM8",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items=$input.all(); return [{json:{attachments_recorded:items.filter(i=>!i.json.error).length,attachment_recording_warning:items.some(i=>i.json.error)}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "id": "ad596199-7052-48a9-9126-35dc14897059",
+      "name": "Finish Attachment Records"
+    }
+  ],
+  "connections": {
+    "Called by Workflow 2": {
+      "main": [
+        [
+          {
+            "node": "Validate Send Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Send Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid": {
+      "main": [
+        [
+          {
+            "node": "Claim Draft for Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Draft for Send": {
+      "main": [
+        [
+          {
+            "node": "Draft Claimed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Claim Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Claimed": {
+      "main": [
+        [
+          {
+            "node": "Create Outlook Reply Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Unsendable Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Outlook Reply Draft": {
+      "main": [
+        [
+          {
+            "node": "Has Uploaded Files",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Unsent Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Uploaded Files": {
+      "main": [
+        [
+          {
+            "node": "Build Binary Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Outlook Reply Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Binary Attachments": {
+      "main": [
+        [
+          {
+            "node": "Attach File to Outlook Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach File to Outlook Draft": {
+      "main": [
+        [
+          {
+            "node": "All Attachments Added",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Unsent Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Attachments Added": {
+      "main": [
+        [
+          {
+            "node": "All Files Attached",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Outlook Reply Draft": {
+      "main": [
+        [
+          {
+            "node": "Record Outgoing Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Send Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Outgoing Email": {
+      "main": [
+        [
+          {
+            "node": "Outgoing Email Recorded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Send Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outgoing Email Recorded": {
+      "main": [
+        [
+          {
+            "node": "Has Sent Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Send Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Unsent Draft": {
+      "main": [
+        [
+          {
+            "node": "Return Before Send Failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Before Send Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Send Uncertain": {
+      "main": [
+        [
+          {
+            "node": "Return Uncertain Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Uncertain Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Files Attached": {
+      "main": [
+        [
+          {
+            "node": "Send Outlook Reply Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Unsent Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Sent Attachments": {
+      "main": [
+        [
+          {
+            "node": "Build Sent Attachment Records",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Sent Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sent Attachment Records": {
+      "main": [
+        [
+          {
+            "node": "Record Sent Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Sent Attachment": {
+      "main": [
+        [
+          {
+            "node": "Finish Attachment Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish Attachment Records": {
+      "main": [
+        [
+          {
+            "node": "Return Sent Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "b3f9dc4f71c1242b2d828afd78c4a38d2ec388931ede06022f9683616b9249bf"
+  }
+}

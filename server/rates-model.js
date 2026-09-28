@@ -35,5 +35,7 @@ export function validatePriceBook(input) {
     if (Number.isInteger(row.sourceRow) && row.sourceRow > 0) result.sourceRow = row.sourceRow;
     return result;
   });
-  return { id, name, description: text('description'), status: input.status, effectiveFrom, effectiveTo, items };
+  const taxPercent = input.taxPercent === undefined ? 0 : input.taxPercent;
+  if (typeof taxPercent !== 'number' || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100) throw new Error('Tax percent must be between 0% and 100%.');
+  return { id, name, description: text('description'), status: input.status, effectiveFrom, effectiveTo, items, taxPercent };
 }

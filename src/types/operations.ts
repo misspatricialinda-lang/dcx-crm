@@ -8,19 +8,19 @@ export interface RateItem {
 export interface PriceBook {
   id: BookId; name: string; description: string; version: number;
   status: 'Draft' | 'Published'; effectiveFrom: string; effectiveTo: string;
-  items: RateItem[]; updatedAt: string;
+  items: RateItem[]; taxPercent?: number; updatedAt: string;
 }
 export interface CostLine extends RateItem { quantity: number; rateItemId: string; }
 export interface FlatLine { id: string; description: string; amount: number; addition: number; }
 export interface CostInput {
   lines: CostLine[]; flatLines: FlatLine[]; shipping: number; brokerage: number;
-  usdRate: number; taxPercent: number;
+  taxPercent: number;
 }
 export interface QuoteDraft extends CostInput {
   customerSnapshot?: Client;
   revises?: string;
   customerId: string; site: string; title: string; bookId: string;
-  bookVersion: number; notes: string; validityDays: number; currency: 'CAD' | 'USD';
+  bookVersion: number; notes: string; validityDays: number; currency: 'CAD';
 }
 export interface SavedQuote extends QuoteDraft {
   id: string; number: string; revision: number; status: 'Draft' | 'Pending review' | 'Approved';

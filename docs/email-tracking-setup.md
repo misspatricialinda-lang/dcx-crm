@@ -108,8 +108,10 @@ All routes use `/api/tracking?action=...`. Dashboard calls use the signed login 
 
 ## Verification and remaining activation work
 
+**24 September 2026 update:** The configured live Supabase project passed table, tracking-relationship, RPC and reporting checks using `npm run db:check`. The connected Outlook Inbox and Sent Items were imported through the tracking API and both reached final delta checkpoints. Application-credential connections now use the same durable checkpoint workflow as delegated OAuth. The local tracking worker token is still absent, so scheduled n8n intake and AI drafting remain unconfigured. No live email was sent during verification. See the root [README](../README.md) for the current software overview and change record.
+
 Local tests exercise the SQL in a PostgreSQL-compatible PGlite database and the HTTP API against it. They cover deduplication, revisions, approval invalidation, repeated dispatch, stale AI results, worker leases, synchronization leases, access restrictions and provider-neutral identities. Provider calls in those tests are mocked; no real email was sent.
 
-Still required: run the migration in your Supabase project, connect Outlook, configure/import the n8n workflows and chosen model, then perform live integration testing. Browser visual QA and a live Outlook/n8n run were not available in this session.
+For a new installation, apply the migrations and connect Outlook before syncing. For the verified local installation, remaining activation work is configuring/importing the n8n workflows and chosen model, followed by a controlled draft-worker test. Browser tests and live Outlook sync have been verified; external n8n execution and live sending have not.
 
 References: [Microsoft incremental message sync](https://learn.microsoft.com/en-us/graph/delta-query-messages), [Microsoft draft-send response semantics](https://learn.microsoft.com/en-us/graph/api/message-send?view=graph-rest-1.0), [n8n HTTP Request](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.httprequest/).

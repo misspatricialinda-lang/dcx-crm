@@ -1,0 +1,870 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "output": "raw",
+        "filters": {},
+        "options": {}
+      },
+      "id": "89db13a9-6500-4c07-b4d4-9742c3c08c21",
+      "name": "New Outlook Email",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2480,
+        256
+      ],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const trig = $('New Outlook Email').first().json;\nconst mailbox = String($('Configure Outlook Mailbox').first().json.mailbox_address || '').trim().toLowerCase();\nif (!mailbox || !trig.id || !trig.conversationId) throw new Error('Connected mailbox, message ID, or conversation ID is missing. Check the app Microsoft connection and Outlook trigger.');\nconst ownAddresses = $('Configure Outlook Mailbox').first().json.own_addresses.map(x=>x.toLowerCase());\nconst byId = new Map();\nfor (const item of $input.all()) if (item.json?.id && item.json.conversationId === trig.conversationId && !item.json.isDraft) byId.set(item.json.id, item.json);\nif (!byId.has(trig.id)) byId.set(trig.id, trig);\nconst addresses = list => (Array.isArray(list) ? list : []).map(x => String(x.emailAddress?.address || '').trim().toLowerCase()).filter(Boolean);\nconst rows = [...byId.values()].map(m => {\n  const sender = String(m.from?.emailAddress?.address || m.sender?.emailAddress?.address || '').trim().toLowerCase();\n  const outgoing = ownAddresses.includes(sender);\n  const when = outgoing ? (m.sentDateTime || m.receivedDateTime) : (m.receivedDateTime || m.sentDateTime);\n  if (!sender || !when || !Number.isFinite(Date.parse(when))) throw new Error('A conversation message has no sender or valid time.');\n  const content = String(m.body?.content || m.bodyPreview || '');\n  const html = String(m.body?.contentType || '').toLowerCase() === 'html';\n  return { provider_key: m.id, provider_ref: m.id, internet_message_id: m.internetMessageId || null,\n    direction: outgoing ? 'outgoing' : 'incoming', sender, to_addresses: addresses(m.toRecipients),\n    cc_addresses: addresses(m.ccRecipients), subject: m.subject || trig.subject || '(no subject)',\n    body_text: html ? (m.bodyPreview || '') : content, body_html: html ? content : '',\n    body_loaded: !!m.body?.content, has_attachments: !!m.hasAttachments, occurred_at: new Date(when).toISOString() };\n}).sort((a,b)=>a.occurred_at.localeCompare(b.occurred_at) || a.provider_key.localeCompare(b.provider_key));\nif (!rows.length) throw new Error('Outlook returned no conversation messages.');\nconst current = rows.find(m => m.provider_key === trig.id);\nif (!current) throw new Error('Triggered message is missing from conversation.');\n// Keep every complete message in payload for the database. Bound only the AI prompt.\nconst plain = m => String(m.body_html\n  ? m.body_html.replace(/<\\/(?:p|div|br|li|tr|blockquote)[^>]*>/gi,'\\n').replace(/<br\\s*\\/?>/gi,'\\n').replace(/<[^>]*>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>')\n  : m.body_text || '').replace(/[ \\t]+/g,' ').replace(/\\n\\s*\\n+/g,'\\n').trim();\nconst describe = (m, body) => `From: ${m.sender}\\nTo: ${m.to_addresses.join(', ')}\\nDate: ${m.occurred_at}\\n${body}`;\nconst older = rows.slice(0,-10);\nconst olderShown = older.length > 40 ? [...older.slice(0,2),...older.slice(-38)] : older;\nconst olderText = olderShown.map(m => describe(m,String(m.body_text || plain(m)).slice(0,500))).join('\\n\\n---\\n\\n');\nconst recent = rows.slice(-10);\nconst recentText = recent.map(m => describe(m,plain(m).slice(0,m.provider_key===trig.id?10000:3500))).join('\\n\\n---\\n\\n');\nconst omitted = older.length-olderShown.length;\nconst threadText = `${rows.length} messages in this Outlook conversation, oldest first. All complete messages are saved in the CRM.\\n`+\n  (older.length ? `Older messages (short excerpts${omitted?`; ${omitted} intermediate messages omitted from this AI prompt`:''}):\\n${olderText}\\n\\n` : '')+\n  `Most recent messages (longer excerpts):\\n${recentText}`+\n  (recent.some(m=>m.provider_key===trig.id)?'':`\\n\\nCurrent received message:\\n${describe(current,plain(current).slice(0,10000))}`);\nconst payload = {mailbox, thread_key:trig.conversationId, subject:trig.subject || current.subject,\n  trigger_id:trig.id, trigger_direction:current.direction, messages:rows};\nreturn [{json:{threadText,subject:payload.subject,sender:current.sender,messageId:trig.id,\n  triggerDirection:current.direction,payloadBase64:Buffer.from(JSON.stringify(payload),'utf8').toString('base64')}}];"
+      },
+      "id": "019671e0-69ea-4cfa-a3d5-7aee9fa384c8",
+      "name": "Format Email Chain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1472,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH payload AS (\n  SELECT convert_from(decode($1,'base64'),'utf8')::jsonb AS v\n), mailbox AS (\n  INSERT INTO email_mailboxes(provider,address)\n  SELECT 'microsoft',v->>'mailbox' FROM payload\n  ON CONFLICT(provider,address) DO UPDATE SET address=EXCLUDED.address\n  RETURNING id\n), thread AS (\n  INSERT INTO email_threads(mailbox_id,provider_thread_key,subject,status,last_message_at)\n  SELECT mailbox.id,p.v->>'thread_key',p.v->>'subject','needs_attention',\n         (SELECT max((m->>'occurred_at')::timestamptz) FROM jsonb_array_elements(p.v->'messages') m)\n  FROM mailbox CROSS JOIN payload p\n  ON CONFLICT(mailbox_id,provider_thread_key) DO UPDATE\n  SET subject=EXCLUDED.subject,last_message_at=GREATEST(email_threads.last_message_at,EXCLUDED.last_message_at),updated_at=now()\n  RETURNING id,mailbox_id\n), inserted AS (\n  INSERT INTO email_messages(thread_id,mailbox_id,provider_key,provider_ref,internet_message_id,\n    direction,sender,to_addresses,cc_addresses,subject,body_text,body_html,body_loaded,has_attachments,occurred_at)\n  SELECT t.id,t.mailbox_id,m.provider_key,m.provider_ref,m.internet_message_id,m.direction,m.sender,\n    m.to_addresses,m.cc_addresses,m.subject,m.body_text,m.body_html,m.body_loaded,m.has_attachments,m.occurred_at\n  FROM thread t CROSS JOIN payload p CROSS JOIN LATERAL jsonb_to_recordset(p.v->'messages') AS m(\n    provider_key text,provider_ref text,internet_message_id text,direction text,sender text,\n    to_addresses jsonb,cc_addresses jsonb,subject text,body_text text,body_html text,\n    body_loaded boolean,has_attachments boolean,occurred_at timestamptz)\n  ON CONFLICT(mailbox_id,provider_key) DO UPDATE SET\n    provider_ref=EXCLUDED.provider_ref,internet_message_id=EXCLUDED.internet_message_id,\n    direction=EXCLUDED.direction,sender=EXCLUDED.sender,to_addresses=EXCLUDED.to_addresses,\n    cc_addresses=EXCLUDED.cc_addresses,subject=EXCLUDED.subject,body_text=EXCLUDED.body_text,\n    body_html=EXCLUDED.body_html,body_loaded=EXCLUDED.body_loaded,\n    has_attachments=EXCLUDED.has_attachments,occurred_at=EXCLUDED.occurred_at\n  RETURNING id,provider_key\n)\nSELECT t.mailbox_id,t.id AS thread_id,\n  (SELECT i.id FROM inserted i,payload p WHERE i.provider_key=p.v->>'trigger_id' LIMIT 1) AS message_id,\n  (SELECT p.v->>'trigger_direction' FROM payload p) AS trigger_direction,\n  (SELECT count(*) FROM inserted) AS stored_message_count\nFROM thread t;",
+        "options": {
+          "queryReplacement": "={{ $('Format Email Chain').first().json.payloadBase64 }}"
+        }
+      },
+      "id": "d6103bf2-577a-4026-9f77-7e37cba2ca72",
+      "name": "Persist Incoming Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1072,
+        448
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH matches AS (\n  SELECT cu.id,cu.name,ct.email,'contact' AS via\n  FROM crm_contacts ct JOIN crm_customers cu ON cu.id=ct.customer_id\n  WHERE lower(ct.email)=lower($1)\n)\nSELECT (SELECT count(DISTINCT id) FROM matches) AS match_count,\n       (SELECT jsonb_build_object('id',id,'name',name,'email',email,'via',via) FROM matches LIMIT 1) AS customer;",
+        "options": {
+          "queryReplacement": "={{ $('Format Email Chain').item.json.sender }}"
+        }
+      },
+      "id": "053e1842-691b-440e-a683-f765afe2e7e1",
+      "name": "Find Customer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -848,
+        784
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ Number($json.match_count) === 1 && $json.customer ? \"WITH u AS (UPDATE email_threads SET customer_id = '\" + $json.customer.id + \"'::uuid, updated_at = now() WHERE id = $1::uuid RETURNING id) SELECT (SELECT id FROM u) AS linked_thread_id;\" : \"SELECT NULL::uuid AS linked_thread_id;\" }}",
+        "options": {
+          "queryReplacement": "={{ $('Persist Incoming Email').item.json.thread_id }}"
+        }
+      },
+      "id": "dad0026c-25b7-4167-9782-99b3a7fbdfb1",
+      "name": "Link Thread to Customer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -400,
+        752
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ Number($('Find Customer').item.json.match_count) === 1 && $('Find Customer').item.json.customer ? \"SELECT (SELECT jsonb_agg(jsonb_build_object('name', name, 'email', email, 'phone', phone)) FROM crm_contacts WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid) AS contacts, (SELECT jsonb_agg(jsonb_build_object('name', name, 'address', address)) FROM crm_sites WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid) AS sites, (SELECT jsonb_agg(jsonb_build_object('name', name, 'model', model, 'serial_number', serial_number, 'battery_configuration', battery_configuration)) FROM crm_equipment WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid) AS equipment, (SELECT jsonb_agg(jsonb_build_object('name', name, 'occurred_on', occurred_on, 'amount', amount)) FROM (SELECT * FROM crm_purchases WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid ORDER BY occurred_on DESC LIMIT 10) p) AS purchases, (SELECT jsonb_agg(jsonb_build_object('name', name, 'occurred_on', occurred_on, 'notes', notes)) FROM (SELECT * FROM crm_services WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid ORDER BY occurred_on DESC LIMIT 10) s) AS services;\" : \"SELECT NULL AS contacts, NULL AS sites, NULL AS equipment, NULL AS purchases, NULL AS services;\" }}",
+        "options": {
+          "queryReplacement": ""
+        }
+      },
+      "id": "56168380-7440-4da6-a141-f7eeb5b9f21d",
+      "name": "Load Customer Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -176,
+        752
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $('Find Customer').item.json;\nconst ctx = $('Load Customer Context').item.json;\nconst prev = $('Format Email Chain').item.json;\nfunction list(arr, fn) { if (!arr || !arr.length) return 'none'; return arr.map(fn).join('; '); }\nlet contextText = '';\nconst mc = Number(f.match_count || 0);\nif (mc === 1 && f.customer) {\n  const c = f.customer;\n  contextText = 'Customer: ' + c.name + ' <' + c.email + '> (matched via ' + c.via + ')\\n';\n  contextText += 'Contacts: ' + list(ctx.contacts, x => x.name + ' <' + x.email + '>' + (x.phone ? ' ' + x.phone : '')) + '\\n';\n  contextText += 'Sites: ' + list(ctx.sites, x => x.name + ' (' + x.address + ')') + '\\n';\n  contextText += 'Equipment: ' + list(ctx.equipment, x => x.name + (x.model ? ' model ' + x.model : '') + (x.serial_number ? ' S/N ' + x.serial_number : '') + (x.battery_configuration ? ' [' + x.battery_configuration + ']' : '')) + '\\n';\n  contextText += 'Recent purchases: ' + list(ctx.purchases, x => x.name + ' on ' + x.occurred_on + (x.amount != null ? ' $' + x.amount : '')) + '\\n';\n  contextText += 'Recent services: ' + list(ctx.services, x => x.name + ' on ' + x.occurred_on + (x.notes ? ' - ' + x.notes : ''));\n} else if (mc > 1) {\n  contextText = 'WARNING: multiple CRM customers match this sender email. Do not reference any specific account details; answer generally and note the account needs manual review.';\n}\nreturn [{ json: { contextText, customerMatched: mc === 1, matchCount: mc, subject: prev.subject, sender: prev.sender, threadText: prev.threadText, messageId: prev.messageId } }];"
+      },
+      "id": "72ecc3e7-6830-49a0-a5ad-b2e14d07a81c",
+      "name": "Format Customer Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Draft a reply to this email.\\n\\nSubject: \" + $(\"Format Customer Context\").first().json.subject + \"\\nFrom: \" + $(\"Format Customer Context\").first().json.sender + \"\\n\\nEmail conversation context (older messages may be excerpts; newest messages have more detail):\\n\" + $(\"Format Customer Context\").first().json.threadText + ($(\"Format Customer Context\").first().json.contextText ? \"\\n\\nCRM customer context:\\n\" + $(\"Format Customer Context\").first().json.contextText : \"\\n\\nNo CRM customer matched this sender. Answer generally and do not invent account-specific details.\") }}",
+        "options": {
+          "systemMessage": "You are an email assistant for the business owner. Draft concise, professional, friendly email replies. Always call the knowledge_base tool first to ground your answer in company information. When CRM customer context is provided, ground the reply in the customer's real contacts, sites, equipment, purchases and service history, and reference their equipment names or serial numbers when relevant. If the knowledge base has no relevant answer, say what you can and keep the reply honest. Output ONLY the reply body text, no subject line, no commentary, no sign-off placeholder brackets. The conversation context may abbreviate older messages. Do not assume omitted text says anything specific; if an earlier commitment or detail is unclear, ask for clarification instead of inventing it. Reply to the latest received message and respect the conversation chronology.",
+          "maxIterations": 8
+        }
+      },
+      "id": "019a0937-9eeb-4828-a72a-6ce4bda12b30",
+      "name": "Draft Reply",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        768,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "65cd50df-a99e-44f3-b94a-323e1b3ee49b",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        736,
+        688
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Search the company knowledge base for product, pricing, policy and FAQ information to answer customer questions.",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "id": "c4764964-9cff-40a7-85fd-9f279dba7f0a",
+      "name": "knowledge_base",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        1024,
+        704
+      ],
+      "rewireOutputLogTo": "ai_tool",
+      "credentials": {
+        "supabaseApi": {
+          "id": "UWlDdtOOI61vsKM8",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "0eb99ebd-83b1-4c47-bf31-f1649e9266e7",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        880
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "draft",
+              "value": "={{ $json.output }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "subject",
+              "value": "={{ $('Format Email Chain').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "sender",
+              "value": "={{ $('Format Email Chain').item.json.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "messageId",
+              "value": "={{ $('Format Email Chain').item.json.messageId }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "threadText",
+              "value": "={{ $('Format Email Chain').item.json.threadText }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "38664ce3-0c6d-411c-a943-4766e0cb7372",
+      "name": "Prepare Draft",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1184,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = String($json.draft || '');\nconst subject = String($json.subject || '');\nconst sender = String($json.sender || '').trim().toLowerCase();\nconst threadId = $('Persist Incoming Email').first().json.thread_id;\nconst messageId = $('Persist Incoming Email').first().json.message_id;\nif (!body.trim() || !sender || !threadId || !messageId) throw new Error('Cannot save an incomplete reply draft.');\nconst payload = {body, subject, sender, thread_id:threadId, message_id:messageId};\nreturn [{json:{payloadBase64:Buffer.from(JSON.stringify(payload),'utf8').toString('base64')}}];"
+      },
+      "id": "79894a8e-0be5-4232-8710-1791888bb75f",
+      "name": "Build Draft Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT convert_from(decode($1,'base64'),'utf8')::jsonb AS v),\nd AS (\n INSERT INTO email_drafts(thread_id,reply_to_message_id,current_body,original_ai_body,to_addresses,subject,revision,source_message_version,status)\n SELECT (v->>'thread_id')::uuid,(v->>'message_id')::uuid,v->>'body',v->>'body',jsonb_build_array(v->>'sender'),v->>'subject',1,1,'editing' FROM p\n ON CONFLICT(thread_id) WHERE status <> 'sent' DO UPDATE SET\n current_body=EXCLUDED.current_body,original_ai_body=EXCLUDED.original_ai_body,\n to_addresses=EXCLUDED.to_addresses,subject=EXCLUDED.subject,\n reply_to_message_id=EXCLUDED.reply_to_message_id,revision=email_drafts.revision+1,\n status='editing',updated_at=now()\n RETURNING id,revision,current_body,to_addresses,subject\n), rev AS (\n INSERT INTO email_draft_revisions(draft_id,revision,body,to_addresses,subject,actor)\n SELECT id,revision,current_body,to_addresses,subject,'ai' FROM d RETURNING id\n)\nSELECT (SELECT id FROM d) AS draft_id,(SELECT revision FROM d) AS revision,(SELECT id FROM rev) AS revision_id;",
+        "options": {
+          "queryReplacement": "={{ $json.payloadBase64 }}"
+        }
+      },
+      "id": "9c7602d6-0d05-47a9-b87d-2c590591eb75",
+      "name": "Save Dashboard Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1632,
+        464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Format Email Chain').item.json.messageId }}"
+        },
+        "updateFields": {
+          "isRead": true
+        }
+      },
+      "id": "60c1789e-13cb-4d64-bb7e-db3bca5c1c92",
+      "name": "Mark Email Read",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        1968,
+        496
+      ],
+      "webhookId": "606c099b-687a-46e7-a4e8-b7c81079454e",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messageAttachment",
+        "operation": "getAll",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('New Outlook Email').first().json.id }}"
+        },
+        "returnAll": true,
+        "options": {
+          "fields": [
+            "contentType",
+            "isInline",
+            "name",
+            "size"
+          ]
+        }
+      },
+      "id": "38849156-cc54-493e-9bdd-e33bc0a3b2f9",
+      "name": "List Attachments",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -848,
+        96
+      ],
+      "webhookId": "6f096206-311a-4169-a710-857216d99b21",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "not-inline",
+              "leftValue": "={{ $json.isInline || false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0048c79a-178d-409f-a973-b110494814c4",
+      "name": "Skip Inline Images",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -624,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "messageAttachment",
+        "operation": "download",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('New Outlook Email').first().json.id }}"
+        },
+        "attachmentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        }
+      },
+      "id": "7790822e-2bc7-41e8-8c88-3b1498c1a2c4",
+      "name": "Download Attachment",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        48
+      ],
+      "webhookId": "f1326bed-857d-4a2c-93ff-c38120b94749",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://lewpvgqqetlkwqythqki.supabase.co/storage/v1/object/email-attachments/\" + $('Persist Incoming Email').item.json.thread_id + \"/\" + $('Persist Incoming Email').item.json.message_id + \"/\" + encodeURIComponent($json.name || \"attachment\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "44fd33bd-bea4-45ac-9912-962e1c8b8989",
+      "name": "Upload to Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -176,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "UWlDdtOOI61vsKM8",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, storage_path)\nVALUES ($1::uuid, $2, $3, $4, $5, $6)\nON CONFLICT (message_id, provider_id) DO UPDATE SET storage_path = EXCLUDED.storage_path\nRETURNING id, name, content_type;",
+        "options": {
+          "queryReplacement": "={{ $('Persist Incoming Email').item.json.message_id }}, {{ $('Download Attachment').item.json.id }}, {{ $('Download Attachment').item.json.name }}, {{ $('Download Attachment').item.json.contentType }}, {{ $('Download Attachment').item.json.size || 0 }}, {{ $('Persist Incoming Email').item.json.thread_id + \"/\" + $('Persist Incoming Email').item.json.message_id + \"/\" + encodeURIComponent($('Download Attachment').item.json.name || \"attachment\") }}"
+        }
+      },
+      "id": "63388a83-66ac-4baf-a289-e02bb0013ae3",
+      "name": "Record Attachment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        48,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "output": "raw",
+        "filtersUI": {
+          "values": {
+            "filters": {
+              "custom": "={{ \"conversationId eq '\" + $(\"New Outlook Email\").first().json.conversationId.replace(/'/g, \"''\") + \"'\" }}",
+              "readStatus": "both"
+            },
+            "filterBy": "filters"
+          }
+        },
+        "options": {},
+        "returnAll": true
+      },
+      "id": "270d8a27-e1ff-49e6-be60-da3b6058ca96",
+      "name": "Get Email Chain",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -1648,
+        480
+      ],
+      "webhookId": "fb5baef2-1a78-4cd0-b713-e17f317ae5f3",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set these to the addresses of the ONE Outlook account used by this workflow.\nconst mailbox_address='aliisthebestofthebest@outlook.com';\nconst own_addresses=['aliisthebestofthebest@outlook.com','outlook_f90cec84ccc04643@outlook.com'];\nreturn [{json:{mailbox_address,own_addresses}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -540,
+        0
+      ],
+      "id": "6c03709b-e0a7-4bcb-87e6-e0babb411d49",
+      "name": "Configure Outlook Mailbox"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f38e5e66-aad1-4a3a-8ba3-deeff9e6a968",
+              "leftValue": "={{ $json.trigger_direction === 'incoming' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        540,
+        0
+      ],
+      "id": "717c67a5-ace0-4c36-a461-09c5186d9a5d",
+      "name": "Incoming Message?"
+    },
+    {
+      "id": "a58a8f80-8b6c-44a6-a240-3aa211befffa",
+      "name": "Reconcile Sent Copies",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1272,
+        112
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT convert_from(decode($1,'base64'),'utf8')::jsonb AS v),\ngraph AS (\n SELECT g.* FROM p CROSS JOIN LATERAL jsonb_to_recordset(p.v->'messages') AS g(\n  provider_key text,provider_ref text,internet_message_id text,direction text,sender text,\n  to_addresses jsonb,subject text,body_text text,body_html text,occurred_at timestamptz)\n WHERE g.direction='outgoing' AND length(regexp_replace(lower(g.body_text),'[^[:alnum:]]+','','g'))>=3\n), candidates AS (\n SELECT m.id,g.provider_key,g.provider_ref,g.internet_message_id,g.body_text,g.body_html,g.occurred_at,\n  count(*) OVER (PARTITION BY m.id) AS provisional_count,\n  count(*) OVER (PARTITION BY g.provider_key) AS graph_count\n FROM graph g CROSS JOIN p\n JOIN email_mailboxes mb ON mb.provider='microsoft' AND mb.address=p.v->>'mailbox'\n JOIN email_threads t ON t.mailbox_id=mb.id AND t.provider_thread_key=p.v->>'thread_key'\n JOIN email_messages m ON m.thread_id=t.id AND m.provider_key LIKE 'crm-send:%' AND m.direction='outgoing'\n WHERE m.to_addresses=g.to_addresses AND lower(m.subject)=lower(g.subject)\n   AND abs(extract(epoch FROM (m.occurred_at-g.occurred_at)))<=600\n   AND left(regexp_replace(lower(m.body_text),'[^[:alnum:]]+','','g'),\n            least(length(regexp_replace(lower(g.body_text),'[^[:alnum:]]+','','g')),150))\n       =left(regexp_replace(lower(g.body_text),'[^[:alnum:]]+','','g'),\n             least(length(regexp_replace(lower(g.body_text),'[^[:alnum:]]+','','g')),150))\n   AND NOT EXISTS(SELECT 1 FROM email_messages found WHERE found.mailbox_id=mb.id AND found.provider_key=g.provider_key)\n), reconciled AS (\n UPDATE email_messages m SET provider_key=c.provider_key,provider_ref=c.provider_ref,\n  internet_message_id=c.internet_message_id,body_text=c.body_text,body_html=c.body_html,occurred_at=c.occurred_at\n FROM candidates c WHERE m.id=c.id AND c.provisional_count=1 AND c.graph_count=1 RETURNING m.id\n)\nSELECT (SELECT count(*) FROM reconciled) AS reconciled_sent_copies,$1::text AS payloadBase64;",
+        "options": {
+          "queryReplacement": "={{ $json.payloadBase64 }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "New Outlook Email": {
+      "main": [
+        [
+          {
+            "node": "Configure Outlook Mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email Chain": {
+      "main": [
+        [
+          {
+            "node": "Reconcile Sent Copies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Incoming Email": {
+      "main": [
+        [
+          {
+            "node": "Incoming Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Customer": {
+      "main": [
+        [
+          {
+            "node": "Link Thread to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link Thread to Customer": {
+      "main": [
+        [
+          {
+            "node": "Load Customer Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Customer Context": {
+      "main": [
+        [
+          {
+            "node": "Format Customer Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Customer Context": {
+      "main": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Reply": {
+      "main": [
+        [
+          {
+            "node": "Prepare Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "knowledge_base": {
+      "ai_tool": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "knowledge_base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Draft": {
+      "main": [
+        [
+          {
+            "node": "Build Draft Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Draft Query": {
+      "main": [
+        [
+          {
+            "node": "Save Dashboard Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Dashboard Draft": {
+      "main": [
+        [
+          {
+            "node": "Mark Email Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Attachments": {
+      "main": [
+        [
+          {
+            "node": "Skip Inline Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Inline Images": {
+      "main": [
+        [
+          {
+            "node": "Download Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Attachment": {
+      "main": [
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Record Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Email Chain": {
+      "main": [
+        [
+          {
+            "node": "Format Email Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Incoming Message?": {
+      "main": [
+        [
+          {
+            "node": "Find Customer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "List Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Configure Outlook Mailbox": {
+      "main": [
+        [
+          {
+            "node": "Get Email Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconcile Sent Copies": {
+      "main": [
+        [
+          {
+            "node": "Persist Incoming Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "nodeGroups": [],
+  "meta": {
+    "instanceId": "b3f9dc4f71c1242b2d828afd78c4a38d2ec388931ede06022f9683616b9249bf"
+  },
+  "name": "Workflow 1 - Track Outlook conversations and draft incoming replies",
+  "description": "Fetches the full Outlook conversation on each trigger, stores each message under the connected mailbox with correct direction and body, and drafts only for an incoming trigger. Prevents outbound messages from creating self-addressed AI replies."
+}

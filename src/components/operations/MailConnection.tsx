@@ -44,6 +44,6 @@ export function MailConnectionCard() {
     {connection.provider !== 'hostinger' && oauth?.connections?.length ? <div className="mail-connections"><strong>Connected Microsoft accounts</strong>{oauth.connections.map(item => <button className={item.is_active ? 'secondary active' : 'text-button'} key={item.id} disabled={item.is_active} onClick={() => choose(item.id)}><span>{item.display_name || item.email_address}</span><small>{item.email_address}{item.is_active ? ' · Active' : ''}</small></button>)}<a className="text-button" href="/api/microsoft-oauth?action=start">Connect another mailbox</a></div> : null}
     {oauthError && <p role="alert" className="form-error">{oauthError}</p>}
     {connection.error && <p role="alert" className="form-error">{connection.error}</p>}
-    <button className="secondary" disabled={connection.mode === 'loading'} onClick={connection.check}>Check connection</button><p className="field-help">Tracked conversations are stored separately in Supabase after mailbox sync.</p>
+    <button className="secondary" disabled={connection.mode === 'loading'} onClick={connection.check}>Check connection</button><p className="field-help">Tracked conversations appear after mailbox sync.</p>
   </section>;
 }

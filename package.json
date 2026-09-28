@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "db:check": "node scripts/check-supabase.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
@@ -20,7 +21,8 @@
     "lucide-react": "^0.477.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tailwind-merge": "^3.0.2"
+    "tailwind-merge": "^3.0.2",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

@@ -1,0 +1,937 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "getAll",
+        "output": "fields",
+        "fields": [
+          "subject",
+          "body",
+          "bodyPreview",
+          "from",
+          "receivedDateTime"
+        ],
+        "filtersUI": {
+          "values": {
+            "filters": {
+              "custom": "={{ 'conversationId eq \\'' + $('New Outlook Email').first().json.conversationId + '\\'' }}",
+              "readStatus": "both"
+            }
+          }
+        },
+        "options": {}
+      },
+      "id": "270d8a27-e1ff-49e6-be60-da3b6058ca96",
+      "name": "Get Email Chain",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -1648,
+        480
+      ],
+      "webhookId": "fb5baef2-1a78-4cd0-b713-e17f317ae5f3",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, storage_path)\nVALUES ($1::uuid, $2, $3, $4, $5, $6)\nON CONFLICT (message_id, provider_id) DO UPDATE SET storage_path = EXCLUDED.storage_path\nRETURNING id, name, content_type;",
+        "options": {
+          "queryReplacement": "={{ $('Persist Incoming Email').item.json.message_id }}, {{ $('Download Attachment').item.json.id }}, {{ $('Download Attachment').item.json.name }}, {{ $('Download Attachment').item.json.contentType }}, {{ $('Download Attachment').item.json.size || 0 }}, {{ $('Persist Incoming Email').item.json.thread_id + \"/\" + $('Persist Incoming Email').item.json.message_id + \"/\" + encodeURIComponent($('Download Attachment').item.json.name || \"attachment\") }}"
+        }
+      },
+      "id": "63388a83-66ac-4baf-a289-e02bb0013ae3",
+      "name": "Record Attachment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        48,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://lewpvgqqetlkwqythqki.supabase.co/storage/v1/object/email-attachments/\" + $('Persist Incoming Email').item.json.thread_id + \"/\" + $('Persist Incoming Email').item.json.message_id + \"/\" + encodeURIComponent($json.name || \"attachment\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "44fd33bd-bea4-45ac-9912-962e1c8b8989",
+      "name": "Upload to Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -176,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "UWlDdtOOI61vsKM8",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messageAttachment",
+        "operation": "download",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('New Outlook Email').first().json.id }}"
+        },
+        "attachmentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        }
+      },
+      "id": "7790822e-2bc7-41e8-8c88-3b1498c1a2c4",
+      "name": "Download Attachment",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        48
+      ],
+      "webhookId": "f1326bed-857d-4a2c-93ff-c38120b94749",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "not-inline",
+              "leftValue": "={{ $json.isInline || false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0048c79a-178d-409f-a973-b110494814c4",
+      "name": "Skip Inline Images",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -624,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "messageAttachment",
+        "operation": "getAll",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('New Outlook Email').first().json.id }}"
+        },
+        "returnAll": true,
+        "options": {
+          "fields": [
+            "contentType",
+            "isInline",
+            "name",
+            "size"
+          ]
+        }
+      },
+      "id": "38849156-cc54-493e-9bdd-e33bc0a3b2f9",
+      "name": "List Attachments",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        -848,
+        96
+      ],
+      "webhookId": "6f096206-311a-4169-a710-857216d99b21",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "messageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Format Email Chain').item.json.messageId }}"
+        },
+        "updateFields": {
+          "isRead": true
+        }
+      },
+      "id": "60c1789e-13cb-4d64-bb7e-db3bca5c1c92",
+      "name": "Mark Email Read",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        1968,
+        496
+      ],
+      "webhookId": "606c099b-687a-46e7-a4e8-b7c81079454e",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.query }}",
+        "options": {}
+      },
+      "id": "9c7602d6-0d05-47a9-b87d-2c590591eb75",
+      "name": "Save Dashboard Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1632,
+        464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const draft = $json.draft || '';\nconst subject = ($json.subject || '').replace(/'/g, \"''\");\nconst sender = $json.sender || '';\nconst threadId = $('Persist Incoming Email').item.json.thread_id;\nconst messageId = $('Persist Incoming Email').item.json.message_id;\nconst toAddresses = JSON.stringify([sender]);\n\nconst query =\n  \"WITH d AS (\" +\n  \"INSERT INTO email_drafts \" +\n  \"(thread_id, reply_to_message_id, current_body, original_ai_body, to_addresses, subject, revision, source_message_version, status) \" +\n  \"VALUES ('\" + threadId + \"'::uuid, '\" + messageId + \"'::uuid, \" +\n  \"$body$\" + draft + \"$body$, $body$\" + draft + \"$body$, \" +\n  \"'\" + toAddresses + \"'::jsonb, '\" + subject + \"', 1, 1, 'editing') \" +\n  \"ON CONFLICT (thread_id) WHERE status <> 'sent' DO UPDATE SET \" +\n  \"current_body = EXCLUDED.current_body, \" +\n  \"original_ai_body = EXCLUDED.original_ai_body, \" +\n  \"subject = EXCLUDED.subject, \" +\n  \"to_addresses = EXCLUDED.to_addresses, \" +\n  \"reply_to_message_id = EXCLUDED.reply_to_message_id, \" +\n  \"revision = email_drafts.revision + 1, \" +\n  \"status = 'editing', \" +\n  \"updated_at = now() \" +\n  \"RETURNING id, revision\" +\n  \"), rev AS (\" +\n  \"INSERT INTO email_draft_revisions \" +\n  \"(draft_id, revision, body, to_addresses, subject, actor) \" +\n  \"SELECT id, revision, $body$\" + draft + \"$body$, \" +\n  \"'\" + toAddresses + \"'::jsonb, '\" + subject + \"', 'ai' FROM d RETURNING id\" +\n  \") \" +\n  \"SELECT (SELECT id FROM d) AS draft_id, \" +\n  \"(SELECT revision FROM d) AS revision, \" +\n  \"(SELECT id FROM rev) AS revision_id;\";\n\nreturn [{ json: { query } }];"
+      },
+      "id": "79894a8e-0be5-4232-8710-1791888bb75f",
+      "name": "Build Draft Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "draft",
+              "value": "={{ $json.output }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "subject",
+              "value": "={{ $('Format Email Chain').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "sender",
+              "value": "={{ $('Format Email Chain').item.json.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "messageId",
+              "value": "={{ $('Format Email Chain').item.json.messageId }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "threadText",
+              "value": "={{ $('Format Email Chain').item.json.threadText }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "38664ce3-0c6d-411c-a943-4766e0cb7372",
+      "name": "Prepare Draft",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1184,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "0eb99ebd-83b1-4c47-bf31-f1649e9266e7",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        880
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Search the company knowledge base for product, pricing, policy and FAQ information to answer customer questions.",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "id": "c4764964-9cff-40a7-85fd-9f279dba7f0a",
+      "name": "knowledge_base",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        1024,
+        704
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "UWlDdtOOI61vsKM8",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "65cd50df-a99e-44f3-b94a-323e1b3ee49b",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        736,
+        688
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Draft a reply to this email.\\n\\nSubject: \" + $(\"Format Customer Context\").first().json.subject + \"\\nFrom: \" + $(\"Format Customer Context\").first().json.sender + \"\\n\\nFull email chain (oldest first):\\n\" + $(\"Format Customer Context\").first().json.threadText + ($(\"Format Customer Context\").first().json.contextText ? \"\\n\\nCRM customer context:\\n\" + $(\"Format Customer Context\").first().json.contextText : \"\\n\\nNo CRM customer matched this sender. Answer generally and do not invent account-specific details.\") }}",
+        "options": {
+          "systemMessage": "You are an email assistant for the business owner. Draft concise, professional, friendly email replies. Always call the knowledge_base tool first to ground your answer in company information. When CRM customer context is provided, ground the reply in the customer's real contacts, sites, equipment, purchases and service history, and reference their equipment names or serial numbers when relevant. If the knowledge base has no relevant answer, say what you can and keep the reply honest. Output ONLY the reply body text, no subject line, no commentary, no sign-off placeholder brackets.",
+          "maxIterations": 8
+        }
+      },
+      "id": "019a0937-9eeb-4828-a72a-6ce4bda12b30",
+      "name": "Draft Reply",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        768,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $('Find Customer').item.json;\nconst ctx = $('Load Customer Context').item.json;\nconst prev = $('Format Email Chain').item.json;\nfunction list(arr, fn) { if (!arr || !arr.length) return 'none'; return arr.map(fn).join('; '); }\nlet contextText = '';\nconst mc = Number(f.match_count || 0);\nif (mc === 1 && f.customer) {\n  const c = f.customer;\n  contextText = 'Customer: ' + c.name + ' <' + c.email + '> (matched via ' + c.via + ')\\n';\n  contextText += 'Contacts: ' + list(ctx.contacts, x => x.name + ' <' + x.email + '>' + (x.phone ? ' ' + x.phone : '')) + '\\n';\n  contextText += 'Sites: ' + list(ctx.sites, x => x.name + ' (' + x.address + ')') + '\\n';\n  contextText += 'Equipment: ' + list(ctx.equipment, x => x.name + (x.model ? ' model ' + x.model : '') + (x.serial_number ? ' S/N ' + x.serial_number : '') + (x.battery_configuration ? ' [' + x.battery_configuration + ']' : '')) + '\\n';\n  contextText += 'Recent purchases: ' + list(ctx.purchases, x => x.name + ' on ' + x.occurred_on + (x.amount != null ? ' $' + x.amount : '')) + '\\n';\n  contextText += 'Recent services: ' + list(ctx.services, x => x.name + ' on ' + x.occurred_on + (x.notes ? ' - ' + x.notes : ''));\n} else if (mc > 1) {\n  contextText = 'WARNING: multiple CRM customers match this sender email. Do not reference any specific account details; answer generally and note the account needs manual review.';\n}\nreturn [{ json: { contextText, customerMatched: mc === 1, matchCount: mc, subject: prev.subject, sender: prev.sender, threadText: prev.threadText, messageId: prev.messageId } }];"
+      },
+      "id": "72ecc3e7-6830-49a0-a5ad-b2e14d07a81c",
+      "name": "Format Customer Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ Number($('Find Customer').item.json.match_count) === 1 && $('Find Customer').item.json.customer ? \"SELECT (SELECT jsonb_agg(jsonb_build_object('name', name, 'email', email, 'phone', phone)) FROM crm_contacts WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid) AS contacts, (SELECT jsonb_agg(jsonb_build_object('name', name, 'address', address)) FROM crm_sites WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid) AS sites, (SELECT jsonb_agg(jsonb_build_object('name', name, 'model', model, 'serial_number', serial_number, 'battery_configuration', battery_configuration)) FROM crm_equipment WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid) AS equipment, (SELECT jsonb_agg(jsonb_build_object('name', name, 'occurred_on', occurred_on, 'amount', amount)) FROM (SELECT * FROM crm_purchases WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid ORDER BY occurred_on DESC LIMIT 10) p) AS purchases, (SELECT jsonb_agg(jsonb_build_object('name', name, 'occurred_on', occurred_on, 'notes', notes)) FROM (SELECT * FROM crm_services WHERE customer_id = '\" + $('Find Customer').item.json.customer.id + \"'::uuid ORDER BY occurred_on DESC LIMIT 10) s) AS services;\" : \"SELECT NULL AS contacts, NULL AS sites, NULL AS equipment, NULL AS purchases, NULL AS services;\" }}",
+        "options": {
+          "queryReplacement": ""
+        }
+      },
+      "id": "56168380-7440-4da6-a141-f7eeb5b9f21d",
+      "name": "Load Customer Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -176,
+        752
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ Number($json.match_count) === 1 && $json.customer ? \"WITH u AS (UPDATE email_threads SET customer_id = '\" + $json.customer.id + \"'::uuid, updated_at = now() WHERE id = $1::uuid RETURNING id) SELECT (SELECT id FROM u) AS linked_thread_id;\" : \"SELECT NULL::uuid AS linked_thread_id;\" }}",
+        "options": {
+          "queryReplacement": "={{ $('Persist Incoming Email').item.json.thread_id }}"
+        }
+      },
+      "id": "dad0026c-25b7-4167-9782-99b3a7fbdfb1",
+      "name": "Link Thread to Customer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -400,
+        752
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH sender AS (SELECT lower($1) AS email),\nmatches AS (\n  SELECT cu.id, cu.name, cu.email, 'customer' AS via\n  FROM crm_customers cu, sender\n  WHERE cu.email <> '' AND lower(cu.email) = sender.email\n  UNION\n  SELECT cu.id, cu.name, cu.email, 'contact' AS via\n  FROM crm_contacts ct\n  JOIN crm_customers cu ON cu.id = ct.customer_id, sender\n  WHERE ct.email <> '' AND lower(ct.email) = sender.email\n)\nSELECT (SELECT count(DISTINCT id) FROM matches) AS match_count,\n       (SELECT jsonb_build_object('id', id, 'name', name, 'email', email, 'via', via) FROM matches LIMIT 1) AS customer;",
+        "options": {
+          "queryReplacement": "={{ $('Format Email Chain').item.json.sender }}"
+        }
+      },
+      "id": "053e1842-691b-440e-a683-f765afe2e7e1",
+      "name": "Find Customer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -848,
+        784
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH mb AS (\n  INSERT INTO email_mailboxes (provider, address)\n  VALUES ('microsoft', $1)\n  ON CONFLICT (provider, address) DO UPDATE SET address = EXCLUDED.address\n  RETURNING id\n),\nth AS (\n  INSERT INTO email_threads (mailbox_id, provider_thread_key, subject, status, last_message_at)\n  SELECT id, $2, COALESCE(NULLIF($3, ''), '(no subject)'), 'needs_attention', $4::timestamptz FROM mb\n  ON CONFLICT (mailbox_id, provider_thread_key) DO UPDATE\n    SET last_message_at = GREATEST(email_threads.last_message_at, EXCLUDED.last_message_at),\n        subject = COALESCE(NULLIF(EXCLUDED.subject, ''), email_threads.subject),\n        updated_at = now()\n  RETURNING id, mailbox_id\n),\nmsg AS (\n  INSERT INTO email_messages (thread_id, mailbox_id, provider_key, provider_ref, internet_message_id, direction, sender, to_addresses, subject, body_text, occurred_at)\n  SELECT th.id, th.mailbox_id, $5, $5, $6, 'incoming', $7, $8::jsonb, COALESCE(NULLIF($3, ''), '(no subject)'), $9, $4::timestamptz FROM th\n  ON CONFLICT (mailbox_id, provider_key) DO UPDATE\n    SET body_text = COALESCE(NULLIF(EXCLUDED.body_text, ''), email_messages.body_text)\n  RETURNING id\n)\nSELECT (SELECT id FROM mb) AS mailbox_id, (SELECT id FROM th) AS thread_id, (SELECT id FROM msg) AS message_id;",
+        "options": {
+          "queryReplacement": "={{ $('New Outlook Email').first().json.toRecipients[0].emailAddress.address }}, {{ $('New Outlook Email').first().json.conversationId }}, {{ $('Format Email Chain').item.json.subject }}, {{ $('New Outlook Email').first().json.receivedDateTime }}, {{ $('New Outlook Email').first().json.id }}, {{ $('New Outlook Email').first().json.internetMessageId }}, {{ $('Format Email Chain').item.json.sender }}, {{ JSON.stringify($('New Outlook Email').first().json.toRecipients.map(r => r.emailAddress.address)) }}, {{ $('New Outlook Email').first().json.bodyPreview }}"
+        }
+      },
+      "id": "d6103bf2-577a-4026-9f77-7e37cba2ca72",
+      "name": "Persist Incoming Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -1072,
+        448
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst sorted = items.slice().sort((a, b) => new Date(a.json.receivedDateTime) - new Date(b.json.receivedDateTime));\nlet thread = \"\";\nfor (const i of sorted) {\n  const from = (i.json.from && i.json.from.emailAddress && i.json.from.emailAddress.address) || \"unknown\";\n  const when = i.json.receivedDateTime || \"\";\n  const body = (i.json.body && i.json.body.content) || i.json.bodyPreview || \"\";\n  const sep = thread ? \"\\n\\n---\\n\\n\" : \"\";\n  thread += sep + \"From: \" + from + \"\\nDate: \" + when + \"\\n\" + body;\n}\nconst latest = items[items.length - 1].json;\nreturn [{\n  json: {\n    threadText: thread,\n    subject: latest.subject || \"\",\n    sender: (latest.from && latest.from.emailAddress && latest.from.emailAddress.address) || \"\",\n    messageId: $('New Outlook Email').first().json.id,\n  },\n}];"
+      },
+      "id": "019671e0-69ea-4cfa-a3d5-7aee9fa384c8",
+      "name": "Format Email Chain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1472,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stored = $('Check Stored Thread').item.json.messages || [];\nconst trig = $('New Outlook Email').first().json;\nconst items = stored.map(m => ({ json: {\n  subject: trig.subject || '',\n  receivedDateTime: m.occurred_at,\n  body: { content: m.body_text || '' },\n  bodyPreview: (m.body_text || '').slice(0, 255),\n  from: { emailAddress: { address: m.sender || '' } },\n}}));\nconst alreadyStored = stored.some(m => m.provider_key === trig.id);\nif (!alreadyStored) {\n  items.push({ json: {\n    subject: trig.subject || '',\n    receivedDateTime: trig.receivedDateTime,\n    body: trig.body || { content: trig.bodyPreview || '' },\n    bodyPreview: trig.bodyPreview || '',\n    from: trig.from,\n  }});\n}\nreturn items;"
+      },
+      "id": "f08769b0-4a9b-4120-99ba-b7538503ba61",
+      "name": "Build Stored Chain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-stored-messages",
+              "leftValue": "={{ ($json.messages || []).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fecad92f-8ce3-4858-9862-db36768d2bf9",
+      "name": "Thread Known?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1920,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH x AS (\n  SELECT t.id AS thread_id\n  FROM email_mailboxes mb\n  JOIN email_threads t ON t.mailbox_id = mb.id\n  WHERE mb.provider = 'microsoft' AND mb.address = $1 AND t.provider_thread_key = $2\n  LIMIT 1\n)\nSELECT (SELECT thread_id FROM x) AS thread_id,\n  (SELECT jsonb_agg(jsonb_build_object('provider_key', m.provider_key, 'sender', m.sender, 'body_text', m.body_text, 'occurred_at', m.occurred_at) ORDER BY m.occurred_at)\n   FROM email_messages m, x WHERE m.thread_id = x.thread_id) AS messages;",
+        "options": {
+          "queryReplacement": "={{ $('New Outlook Email').first().json.toRecipients[0].emailAddress.address }}, {{ $('New Outlook Email').first().json.conversationId }}"
+        }
+      },
+      "id": "cf943680-13a6-48a5-bf03-e1bfd8d36d97",
+      "name": "Check Stored Thread",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -2144,
+        256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "output": "fields",
+        "fields": [
+          "subject",
+          "body",
+          "bodyPreview",
+          "from",
+          "sender",
+          "conversationId",
+          "internetMessageId",
+          "receivedDateTime",
+          "isRead",
+          "toRecipients"
+        ],
+        "filters": {},
+        "options": {}
+      },
+      "id": "89db13a9-6500-4c07-b4d4-9742c3c08c21",
+      "name": "New Outlook Email",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2480,
+        256
+      ],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Get Email Chain": {
+      "main": [
+        [
+          {
+            "node": "Format Email Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Record Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Attachment": {
+      "main": [
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Inline Images": {
+      "main": [
+        [
+          {
+            "node": "Download Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Attachments": {
+      "main": [
+        [
+          {
+            "node": "Skip Inline Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Dashboard Draft": {
+      "main": [
+        [
+          {
+            "node": "Mark Email Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Draft Query": {
+      "main": [
+        [
+          {
+            "node": "Save Dashboard Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Draft": {
+      "main": [
+        [
+          {
+            "node": "Build Draft Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "knowledge_base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "knowledge_base": {
+      "ai_tool": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Reply": {
+      "main": [
+        [
+          {
+            "node": "Prepare Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Customer Context": {
+      "main": [
+        [
+          {
+            "node": "Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Customer Context": {
+      "main": [
+        [
+          {
+            "node": "Format Customer Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link Thread to Customer": {
+      "main": [
+        [
+          {
+            "node": "Load Customer Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Customer": {
+      "main": [
+        [
+          {
+            "node": "Link Thread to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Incoming Email": {
+      "main": [
+        [
+          {
+            "node": "List Attachments",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Find Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email Chain": {
+      "main": [
+        [
+          {
+            "node": "Persist Incoming Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Stored Chain": {
+      "main": [
+        [
+          {
+            "node": "Format Email Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thread Known?": {
+      "main": [
+        [
+          {
+            "node": "Build Stored Chain",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Email Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Stored Thread": {
+      "main": [
+        [
+          {
+            "node": "Thread Known?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Outlook Email": {
+      "main": [
+        [
+          {
+            "node": "Check Stored Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "nodeGroups": [
+    {
+      "id": "21ef4b92-4cc4-48a2-9040-47e9711569a0",
+      "name": "Read email chain",
+      "nodeIds": [
+        "cf943680-13a6-48a5-bf03-e1bfd8d36d97",
+        "fecad92f-8ce3-4858-9862-db36768d2bf9",
+        "f08769b0-4a9b-4120-99ba-b7538503ba61",
+        "270d8a27-e1ff-49e6-be60-da3b6058ca96",
+        "019671e0-69ea-4cfa-a3d5-7aee9fa384c8"
+      ],
+      "description": "Reuses the stored conversation from the database when the thread is already known, and only calls Outlook for the full chain on new threads."
+    },
+    {
+      "id": "4cadceb4-4ca5-4a9f-8037-254cb6d878be",
+      "name": "Store email attachments",
+      "nodeIds": [
+        "38849156-cc54-493e-9bdd-e33bc0a3b2f9",
+        "0048c79a-178d-409f-a973-b110494814c4",
+        "7790822e-2bc7-41e8-8c88-3b1498c1a2c4",
+        "44fd33bd-bea4-45ac-9912-962e1c8b8989",
+        "63388a83-66ac-4baf-a289-e02bb0013ae3"
+      ],
+      "description": "Downloads any real attachments from the email, stores them in Supabase Storage and records them on the message."
+    },
+    {
+      "id": "4dea628f-70a1-4686-9520-f981724d822b",
+      "name": "Draft reply for review",
+      "nodeIds": [
+        "019a0937-9eeb-4828-a72a-6ce4bda12b30",
+        "38664ce3-0c6d-411c-a943-4766e0cb7372",
+        "79894a8e-0be5-4232-8710-1791888bb75f",
+        "9c7602d6-0d05-47a9-b87d-2c590591eb75",
+        "60c1789e-13cb-4d64-bb7e-db3bca5c1c92",
+        "65cd50df-a99e-44f3-b94a-323e1b3ee49b",
+        "0eb99ebd-83b1-4c47-bf31-f1649e9266e7",
+        "c4764964-9cff-40a7-85fd-9f279dba7f0a"
+      ],
+      "description": "Drafts a reply grounded in the knowledge base and CRM context, saves it as a pending draft for the dashboard, and marks the email as read."
+    },
+    {
+      "id": "f4e9e3d7-1a86-4d76-9755-5b51a09491a5",
+      "name": "Load customer context",
+      "nodeIds": [
+        "dad0026c-25b7-4167-9782-99b3a7fbdfb1",
+        "56168380-7440-4da6-a141-f7eeb5b9f21d",
+        "72ecc3e7-6830-49a0-a5ad-b2e14d07a81c"
+      ],
+      "description": "Matches the sender against the CRM, links the conversation to that customer and gathers their contacts, sites, equipment, purchases and service h"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b3f9dc4f71c1242b2d828afd78c4a38d2ec388931ede06022f9683616b9249bf"
+  }
+}

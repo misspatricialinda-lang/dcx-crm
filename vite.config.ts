@@ -5,6 +5,10 @@ import { crmHandler } from './server/crm-api.js';
 import { mailHandler } from './server/mail-api.js';
 import { trackingHandler } from './server/email-tracking-api.js';
 import { microsoftOAuthHandler } from './server/microsoft-oauth.js';
+import { calendarAgentHandler } from './server/calendar-agent-api.js';
+import { emailAssistantHandler } from './server/email-assistant-api.js';
+import { notificationsHandler } from './server/notifications-api.js';
+import { featureRequestsHandler } from './server/feature-requests-api.js';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -12,6 +16,10 @@ export default defineConfig(({ mode }) => ({
     name: 'local-session-api',
     configureServer(server) {
       const env = loadEnv(mode, process.cwd(), '');
+      server.middlewares.use('/api/feature-requests', (req, res) => { featureRequestsHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"Feature requests are unavailable."}'); }); });
+      server.middlewares.use('/api/notifications', (req, res) => { notificationsHandler(req, res, env).catch(() => { res.statusCode = 500; res.end('{"error":"Notifications are unavailable."}'); }); });
+      server.middlewares.use('/api/email-assistant', (req, res) => { emailAssistantHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"AI email request failed."}'); }); });
+      server.middlewares.use('/api/calendar-agent', (req, res) => { calendarAgentHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"Calendar Agent request failed."}'); }); });
       server.middlewares.use('/api/microsoft-oauth-callback', (req, res) => { req.url = `/api/microsoft-oauth-callback${req.url || ''}`; microsoftOAuthHandler(req, res, env).catch(() => { res.statusCode = 500; res.end('{"error":"Microsoft connection failed."}'); }); });
       server.middlewares.use('/api/microsoft-oauth', (req, res) => { microsoftOAuthHandler(req, res, env).catch(() => { res.statusCode = 500; res.end('{"error":"Microsoft connection failed."}'); }); });
       server.middlewares.use('/api/tracking', (req, res) => { trackingHandler(req, res, env).catch(() => { res.statusCode = 500; res.end('{"error":"Email tracking request failed."}'); }); });

@@ -1,5 +1,5 @@
 export interface TrackedThread {
-  id: string; subject: string; status: string; priority: string; customer_id: string | null;
+  id: string; mailbox_id: string; subject: string; status: string; priority: string; customer_id: string | null;
   assigned_to: string; next_action: string; followup_at: string | null; summary: string;
   summary_message_version: number | null; message_version: number; version: number; last_message_at: string;
 }
@@ -13,6 +13,7 @@ export interface TrackedDraft {
   revision: number; source_message_version: number; status: string; to_addresses: string[]; subject: string;
 }
 export interface ThreadDetail {
+  readOnly?: boolean;
   reply_target?: TrackedMessage | null;
   thread: TrackedThread; messages: TrackedMessage[]; next: string | null; draft?: TrackedDraft;
   activity: { id: number; action: string; actor: string; created_at: string; details: Record<string, any> }[];
