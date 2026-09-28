@@ -16,7 +16,7 @@ The workspace-wide search bar has been removed. Search filters inside customer a
 
 In **Cost calculator**, enter the estimate and select **Download XLSX**. Every download uses the client's `Cost calculation tempelate.xls` / `Job Cost Sheet` layout, delivered as a modern `.xlsx` workbook.
 
-The export preserves the A–M column order, original input colors, company and ship-to sections, flat items, notes, cost/selling/profit totals, and a CAD-only currency note. It keeps ten cost rows and two flat rows for small estimates and expands both sections for larger estimates. Scope, optional tax, CAD currency and rate-version information are included on the same worksheet. The unrelated sample reverse-percentage calculation outside the original cost table is excluded.
+The export preserves the A–M column order, original input colors, company and ship-to sections, flat items, notes, cost/selling/profit totals, and a CAD-only currency note. It keeps ten cost rows and two flat rows for small estimates and expands both sections for larger estimates. The sheet has no frozen rows or additional app fields below the source layout. The unrelated sample reverse-percentage calculation outside the original cost table is excluded.
 
 Calculated cells contain Excel formulas with current cached results. Manual cost overrides stay numeric inputs. Supplier cost × multiplier, quantity, exchange conversion, margin and totals recalculate when workbook inputs change. Text beginning with `=` is exported as literal text. Sample input values from the source workbook are not embedded in the template asset.
 

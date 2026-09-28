@@ -30,13 +30,15 @@ test('export matches the client template and preserves formulas, literal text an
   assert.equal(sheet.getCell('E29').result,157);
   assert.equal(sheet.getCell('E31').result,260);
   assert.equal(sheet.getCell('E33').result,103);
-  assert.equal(sheet.getCell('L45').result,293.8);
+  assert.equal(sheet.getCell('L45').value,null);
   assert.equal(sheet.getCell('B26').value,'Keep all notes');
   assert.equal(sheet.getCell('D11').fill.fgColor.argb,'FFFFFF00');
   assert.equal(sheet.getCell('B11').fill.fgColor.argb,'FFCCFFFF');
   assert.equal(sheet.getCell('L4').value instanceof Date,true);
   assert.equal(sheet.getCell('F13').value,null);
-  assert.equal(sheet.pageSetup.printArea,'A1:M47');
+  assert.equal(sheet.pageSetup.printArea,'A1:M42');
+  assert.equal(sheet.views[0].state,'normal');
+  assert.equal(sheet.getCell('A7').value,null);
   assert.equal(sheet.getCell('L5').value,'CAD');
   assert.equal(sheet.getCell('C35').value,'All amounts in CAD');
   assert.doesNotMatch(JSON.stringify(sheet.getSheetValues()), /USD|Exchange Rate/);
@@ -51,9 +53,8 @@ test('additional lines and flat items expand the template with all totals refere
   assert.equal(sheet.getCell('E37').result,calc.totalCost);
   assert.equal(sheet.getCell('E39').formula,'SUM(M11:M25)+SUM(M27:M31)');
   assert.equal(sheet.getCell('E39').result,calc.sellingPrice);
-  assert.equal(sheet.getCell('L53').result,calc.cadTotal);
-  assert.equal(sheet.getCell('L53').formula,'ROUND(E39+L52,2)');
-  assert.equal(sheet.getCell('C53').value,'Total including tax (CAD)');
+  assert.equal(sheet.getCell('L53').value,null);
+  assert.equal(sheet.pageSetup.printArea,'A1:M50');
   assert.equal(sheet.getCell('B34').value,draft.notes);
 });
 test('empty sheets have no sample values; invalid inputs cannot export', async () => {
@@ -63,5 +64,5 @@ test('empty sheets have no sample values; invalid inputs cannot export', async (
   assert.equal(sheet.getCell('F11').value,null);
   await assert.rejects(buildCostWorkbook({...draft,lines:[{...line,margin:1}]}),/invalid/);
   const legacy = await reopen({...draft,currency:'USD',usdRate:0});
-  assert.equal(legacy.getCell('L45').result,293.8);
+  assert.equal(legacy.getCell('L45').value,null);
 });

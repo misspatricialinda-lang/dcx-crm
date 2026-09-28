@@ -1,6 +1,6 @@
 import type { Style } from 'exceljs';
 import type { QuoteDraft, SavedQuote } from '../types/operations';
-import { calculateCost, FORMULA_VERSION } from './costing.ts';
+import { calculateCost } from './costing.ts';
 import template from './cost-template.json' with { type: 'json' };
 
 // Layout/styles extracted from the client's XLS. Only labels are retained;
@@ -16,8 +16,8 @@ export async function buildCostWorkbook(draft: QuoteDraft) {
   book.created = new Date();
   book.calcProperties.fullCalcOnLoad = true;
   const sheet = book.addWorksheet('Job Cost Sheet', {
-    views: [{ state: 'frozen', ySplit: 10, showGridLines: false }],
-    pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '1:10' },
+    views: [{ state: 'normal', showGridLines: false }],
+    pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
   const lineCount = Math.max(10, draft.lines.length);
   const flatCount = Math.max(2, draft.flatLines.length);
@@ -47,10 +47,8 @@ export async function buildCostWorkbook(draft: QuoteDraft) {
   sheet.mergeCells('L4:M4'); put('L4', new Date()); sheet.getCell('L4').numFmt = 'yyyy-mm-dd';
   put('K5', 'Currency'); mergedText('L5:M5', 'CAD');
   put('C5', draft.customerSnapshot?.name || 'Quick calculation');
-  put('A7', 'Scope:'); mergedText('C7:L7', draft.title);
   put('C8', draft.site);
   sheet.getRow(5).height = Math.max(30, Math.ceil((draft.customerSnapshot?.name.length || 17) / 55) * 16);
-  sheet.getRow(7).height = Math.max(25, Math.ceil(draft.title.length / 110) * 16);
   sheet.getRow(8).height = Math.max(30, Math.ceil(draft.site.length / 110) * 16);
   sheet.getRow(10).height = 44;
 
@@ -116,15 +114,6 @@ export async function buildCostWorkbook(draft: QuoteDraft) {
     mergedText(`C${rowAt(row)}:M${rowAt(row)}`, value);
     sheet.getRow(rowAt(row)).height = 28;
   }
-  // Additional app fields stay on the same worksheet, below the original layout.
-  const taxRow = rowAt(44), totalRow = taxRow + 1;
-  mergedText(`C${taxRow}:E${taxRow}`, 'Tax rate / tax CAD'); put(`F${taxRow}`, draft.taxPercent / 100); sheet.getCell(`F${taxRow}`).numFmt = '0.00%';
-  formula(`L${taxRow}`, `ROUND(E${sell}*F${taxRow},2)`, calc.tax);
-  mergedText(`C${totalRow}:G${totalRow}`, 'Total including tax (CAD)');
-  formula(`L${totalRow}`, `ROUND(E${sell}+L${taxRow},2)`, calc.cadTotal);
-  for (const row of [taxRow, totalRow]) { sheet.getCell(`L${row}`).numFmt = moneyFormat; sheet.getRow(row).height = 25; }
-  mergedText(`C${taxRow + 3}:M${taxRow + 3}`, `Valid for ${draft.validityDays} days. Rate book: ${draft.bookId}, version ${draft.bookVersion}. Formula: ${FORMULA_VERSION}.`);
-  sheet.getRow(taxRow + 3).height = 30;
-  sheet.pageSetup.printArea = `A1:M${taxRow + 3}`;
+  sheet.pageSetup.printArea = `A1:M${rowAt(42)}`;
   return book;
 }
