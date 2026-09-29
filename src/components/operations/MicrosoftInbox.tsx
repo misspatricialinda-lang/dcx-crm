@@ -1001,11 +1001,11 @@ function LiveConversation({
           {aiResult && <div className="mail-ai-result">
             <h3>At a glance</h3><p>{aiResult.analysis.summary}</p>
             {!!aiResult.analysis.next_steps.length && <p className="mail-ai-action"><strong>Next:</strong> {aiResult.analysis.next_steps.slice(0, 2).join(' · ')}</p>}
-            {aiResult.analysis.reply_needed && aiResult.analysis.draft_reply && aiResult.reply_to_message_id ? <div className="mail-ai-draft">
+            {aiResult.analysis.reply_needed && aiResult.analysis.draft_reply && aiResult.reply_to_message_id && !editor?.initialContent ? <div className="mail-ai-draft">
               <h3>Suggested reply</h3>
               <p>{aiResult.analysis.draft_reply}</p>
-              <button type="button" className="primary" onClick={() => edit({ replyTo: aiResult.reply_to_message_id!, initialContent: aiResult.analysis.draft_reply, nonce: Date.now() })}><PenLine size={15} /> Reply with AI draft</button>
-              <small>Opens in the reply editor. You can change it before saving or sending.</small>
+              <button type="button" className="primary" onClick={() => edit({ replyTo: aiResult.reply_to_message_id!, initialContent: aiResult.analysis.draft_reply, nonce: Date.now() })}><PenLine size={15} /> Use suggestion in reply editor</button>
+              <small>One editable reply opens below the conversation. Check its recipients before sending.</small>
             </div> : <p className="mail-ai-no-reply">No reply suggested for this conversation.</p>}
             {!!aiResult.analysis.uncertainties.length && <p className="mail-ai-caution"><strong>Check before replying:</strong> {aiResult.analysis.uncertainties.slice(0, 2).join(' · ')}</p>}
             {!!aiResult.attachments.length && <details className="mail-ai-files"><summary>{aiResult.attachments.filter(file => file.status === 'read').length} of {aiResult.attachments.length} attached files included in analysis</summary><ul>{aiResult.attachments.map((file, index) => <li key={index}>{file.name}: {file.status === 'read' ? 'included' : file.status === 'unsupported' ? 'unsupported file type' : file.status === 'unreadable' ? 'could not be read' : 'size or file limit reached'}</li>)}</ul></details>}
@@ -1078,7 +1078,7 @@ function LiveConversation({
             </button>
             {expanded.includes(m.id) ? (
               <div className="conversation-message-body">
-                <MessageContent message={m} revision={revision} />
+                {m.isDraft && editor ? <p className="field-help">{editor.existing?.id === m.id ? 'This draft is open in the reply editor below.' : 'Saved draft preview hidden while a reply editor is open. Select Edit draft to work on this draft instead.'}</p> : <MessageContent message={m} revision={revision} />}
                 <div className="mail-command-bar">
                   {m.isDraft ? (
                     provider === "hostinger" ? (
@@ -1550,8 +1550,10 @@ function DraftEditor({
     change();
   }
   const hasMessage = !!(editorRef.current?.textContent?.trim() || content.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim());
+  const replyMode = existing ? 'Editing saved draft' : forwardOf ? 'Forwarding message' : replyAll ? 'Reply all' : replyTo ? 'Reply' : 'New message';
   return (
     <section className="conversation-reply">
+      <div className="mail-reply-context"><strong>{replyMode}</strong><span>{replyTo ? `In this conversation, replying to ${source?.from?.emailAddress.address || 'the selected message'}.` : existing ? 'Check the recipients below before sending this saved draft.' : forwardOf ? 'Forwarding the selected message.' : 'Enter recipients below.'} {replyTo && (replyAll ? 'Reply all includes other recipients of the selected message.' : 'Reply sends only to the selected message’s sender.')} This sends one email in the conversation, not a separate reply to every message.</span></div>
       <div className="mail-compose-top">
         <button className="mail-compose-send" type="button" disabled={busy || !ready || !hasMessage || sent} onClick={() => void sendNow()}><Send size={15} /> Send</button>
         <span className="mail-compose-from">From: <strong>{mailbox}</strong></span>
