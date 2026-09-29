@@ -43,15 +43,21 @@ export async function notificationsHandler(req, res, env = process.env, injected
     if (action === 'dispatch') {
       if (!worker) return reply(res, 403, { error: 'Dispatch access denied.' });
       if (!env.WEB_PUSH_VAPID_PUBLIC_KEY || !env.WEB_PUSH_VAPID_PRIVATE_KEY) return reply(res, 503, { error: 'Phone notifications are not configured.' });
-      const subscriptions = await checked(db.from('crm_push_subscriptions').select('id,subscription'));
+      const subscriptions = await checked(db.from('crm_push_subscriptions').select('id,subscription,created_at'));
       if (!subscriptions.length) return reply(res, 200, { sent: 0, reason: 'No subscribed devices.' });
       webpush.setVapidDetails(`mailto:${env.APP_LOGIN_EMAIL}`, env.WEB_PUSH_VAPID_PUBLIC_KEY, env.WEB_PUSH_VAPID_PRIVATE_KEY);
       const notifications = await checked(db.rpc('crm_claim_push_notifications', { p_limit: 20 }));
       let sent = 0;
       for (const item of notifications) {
+        const deliveries = await checked(db.from('crm_push_deliveries').select('subscription_id').eq('notification_id', item.id));
+        const deliveredIds = new Set(deliveries.map(delivery => delivery.subscription_id));
         const payload = JSON.stringify({ title: item.sender || 'New email', body: item.subject || 'Open the CRM to review', url: '/#notifications', tag: item.message_id });
-        const results = await Promise.allSettled(subscriptions.map(async device => {
-          try { await webpush.sendNotification(device.subscription, payload, { TTL: 3600 }); return true; }
+        const results = await Promise.allSettled(subscriptions.filter(device => new Date(device.created_at).getTime() <= new Date(item.created_at).getTime() && !deliveredIds.has(device.id)).map(async device => {
+          try {
+            await webpush.sendNotification(device.subscription, payload, { TTL: 3600 });
+            await checked(db.from('crm_push_deliveries').upsert({ notification_id: item.id, subscription_id: device.id }, { onConflict: 'notification_id,subscription_id' }));
+            return true;
+          }
           catch (error) {
             if ([404, 410].includes(error.statusCode)) await checked(db.from('crm_push_subscriptions').delete().eq('id', device.id));
             throw error;

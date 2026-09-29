@@ -477,7 +477,7 @@ function Dashboard({
               </>
             )}
             {tab === "calendar-agent" && <CalendarAgent preview={preview} />}
-            {tab === "notifications" && <NotificationsPage preview={preview} onUnread={setNotificationCount} onOpenInbox={() => navigate('inbox')} />}
+            {tab === "notifications" && <NotificationsPage preview={preview} onUnread={setNotificationCount} onOpenInbox={(threadId) => navigate('inbox', threadId)} />}
             {tab === "feature-requests" && <FeatureRequestsPage preview={preview} />}
             {SHOW_RATES && tab === "pricing" && (
               <PriceBooks

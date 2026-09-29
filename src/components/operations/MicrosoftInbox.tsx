@@ -69,6 +69,7 @@ export function ConnectedInbox({
 }) {
   const connection = useMailConnection();
   const [view, setView] = useState<'inbox' | 'ai' | 'sent'>('inbox');
+  useEffect(() => { if (focusId) setView('ai'); }, [focusId]);
   if (preview) return <>{children}</>;
   const changeView = (next: typeof view) => {
     if (next === view) return;

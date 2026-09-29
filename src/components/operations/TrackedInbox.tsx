@@ -28,6 +28,7 @@ async function fileToBase64(file:File):Promise<string> {
 
 export function TrackedInbox({focusId,customers,onSent}:Props) {
   const [records,setRecords]=useState<Thread[]>([]), [selected,setSelected]=useState(focusId||'');
+  useEffect(() => { if (focusId) setSelected(focusId); }, [focusId]);
   const [detail,setDetail]=useState<Detail|null>(null), [body,setBody]=useState(''), [savedBody,setSavedBody]=useState('');
   const [query,setQuery]=useState('');
   const [files,setFiles]=useState<File[]>([]);

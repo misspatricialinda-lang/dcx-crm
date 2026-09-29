@@ -15,9 +15,10 @@ function keyBytes(value: string) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
-export function NotificationsPage({ preview, onUnread, onOpenInbox }: { preview: boolean; onUnread: (count: number) => void; onOpenInbox: () => void }) {
+export function NotificationsPage({ preview, onUnread, onOpenInbox }: { preview: boolean; onUnread: (count: number) => void; onOpenInbox: (threadId: string) => void }) {
   const [feed, setFeed] = useState<Feed>({ records: [], unread: 0 });
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [pushAvailable, setPushAvailable] = useState(false);
@@ -29,7 +30,7 @@ export function NotificationsPage({ preview, onUnread, onOpenInbox }: { preview:
 
   async function load() {
     if (preview) { setLoading(false); return; }
-    try { const result = await api<Feed>('list'); setFeed(result); onUnread(result.unread); setError(''); }
+    try { const result = await api<Feed>('list'); setFeed(result); onUnread(result.unread); setError(''); setLoaded(true); }
     catch (cause) { setError((cause as Error).message); }
     finally { setLoading(false); }
   }
@@ -37,7 +38,10 @@ export function NotificationsPage({ preview, onUnread, onOpenInbox }: { preview:
     void load();
     if (!preview) void api<{ available: boolean; publicKey: string }>('config').then(config => {
       setPushAvailable(config.available); setPublicKey(config.publicKey);
-      if (supported) void navigator.serviceWorker.register('/sw.js').then(registration => registration.pushManager.getSubscription()).then(subscription => setSubscribed(!!subscription)).catch(() => {});
+      if (supported && config.available) void navigator.serviceWorker.register('/sw.js').then(registration => registration.pushManager.getSubscription()).then(async subscription => {
+        if (subscription) await api('subscribe', { subscription: subscription.toJSON() });
+        setSubscribed(!!subscription);
+      }).catch(cause => setError((cause as Error).message));
     }).catch(() => {});
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30000);
     return () => clearInterval(timer);
@@ -65,7 +69,7 @@ export function NotificationsPage({ preview, onUnread, onOpenInbox }: { preview:
     finally { setBusy(''); }
   }
   async function read(id: string) {
-    try { await api('read', { id }); const wasUnread = feed.records.some(item => item.id === id && !item.read_at); setFeed(current => ({ records: current.records.map(item => item.id === id ? { ...item, read_at: new Date().toISOString() } : item), unread: Math.max(0, current.unread - (wasUnread ? 1 : 0)) })); onUnread(Math.max(0, feed.unread - (wasUnread ? 1 : 0))); onOpenInbox(); }
+    try { await api('read', { id }); const item = feed.records.find(record => record.id === id); const wasUnread = !!item && !item.read_at; setFeed(current => ({ records: current.records.map(record => record.id === id ? { ...record, read_at: new Date().toISOString() } : record), unread: Math.max(0, current.unread - (wasUnread ? 1 : 0)) })); onUnread(Math.max(0, feed.unread - (wasUnread ? 1 : 0))); if (item) onOpenInbox(item.thread_id); }
     catch (cause) { setError((cause as Error).message); }
   }
   async function readAll() {
@@ -79,7 +83,7 @@ export function NotificationsPage({ preview, onUnread, onOpenInbox }: { preview:
     <div className="notifications-hero"><div className="notifications-hero-icon"><BellRing size={26}/></div><div><span className="notifications-eyebrow">YOUR INBOX, AT A GLANCE</span><h1>Notifications</h1><p>New emails appear here as soon as they are saved.</p></div><button className="secondary compact" onClick={() => void load()} disabled={loading} aria-label="Refresh notifications"><RefreshCw size={16}/></button></div>
     <div className="notifications-layout"><div className="notifications-feed panel"><div className="notifications-feed-head"><div><h2>Recent activity</h2><span>{feed.unread ? `${feed.unread} unread` : 'All caught up'}</span></div>{feed.unread > 0 && <button className="text-button" disabled={busy === 'read'} onClick={() => void readAll()}><CheckCheck size={16}/> Mark all read</button>}</div>
       {error && <p className="form-error" role="alert">{error}</p>}
-      {loading ? <p className="notifications-empty">Loading notifications…</p> : !feed.records.length ? <div className="notifications-empty"><span><Mail size={28}/></span><h3>No new mail yet</h3><p>Incoming email alerts will appear here.</p></div> : <div className="notifications-items">{feed.records.map(item => <button className={`notification-item ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => void read(item.id)}><span className="notification-item-icon"><Mail size={18}/></span><span className="notification-item-copy"><strong>{item.sender || 'New email'}</strong><b>{item.subject || '(No subject)'}</b><small>{item.preview || 'Open the conversation to read this email.'}</small><time>{new Date(item.occurred_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></span><ArrowRight size={17}/></button>)}</div>}
+      {loading ? <p className="notifications-empty">Loading notifications…</p> : !loaded && error ? <div className="notifications-empty"><h3>Notifications could not load</h3><button className="secondary" onClick={() => void load()}>Try again</button></div> : !feed.records.length ? <div className="notifications-empty"><span><Mail size={28}/></span><h3>No new mail yet</h3><p>Incoming email alerts will appear here.</p></div> : <div className="notifications-items">{feed.records.map(item => <button className={`notification-item ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => void read(item.id)}><span className="notification-item-icon"><Mail size={18}/></span><span className="notification-item-copy"><strong>{item.sender || 'New email'}</strong><b>{item.subject || '(No subject)'}</b><small>{item.preview || 'Open the conversation to read this email.'}</small><time>{new Date(item.occurred_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></span><ArrowRight size={17}/></button>)}</div>}
     </div><aside className="notifications-phone panel"><span className="notifications-phone-icon"><Smartphone size={24}/></span><h2>Alerts on your phone</h2><p>Get a notification when a new email arrives, even when the CRM is closed.</p>{ios && !standalone && <p className="notifications-hint">On iPhone, add this website to your Home Screen first, then open it from the new icon.</p>}{!preview && supported && pushAvailable ? <button className={subscribed ? 'secondary' : 'primary'} onClick={() => void setPhoneAlerts()} disabled={busy === 'push' || (ios && !standalone)}>{busy === 'push' ? 'Updating…' : subscribed ? 'Turn off phone alerts' : 'Enable phone alerts'}</button> : <p className="notifications-hint">{preview ? 'Sign in to enable phone alerts.' : !supported ? 'This browser does not support phone alerts.' : 'Phone alerts are not ready yet.'}</p>}<div className="notifications-phone-status"><Bell size={15}/>{subscribed ? 'Phone alerts are on' : 'In-app alerts are available'}</div></aside></div>
   </section>;
 }
