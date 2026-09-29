@@ -57,7 +57,7 @@ export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQ
   }
   const customer = customers.find(c => c.id === selected);
   const rows = history[tab] || [];
-  return <>
+  return <div className="customer-hub">
     <div className="page-heading"><div><h1>{customer?.name || 'Customers'}</h1><p>{customer ? 'Contact details and service history.' : 'Find and manage your customers.'}</p></div></div>
     <>
       <div className="toolbar">{selected ? <button className="secondary" onClick={() => { setSelected(''); setMessage(''); }}><ArrowLeft size={15} /> All customers</button> : <><button className="secondary" disabled={loading || saving} onClick={() => { setRevision(r => r + 1); }}><RefreshCw size={15} /> Refresh</button><button className="primary" disabled={loading || !!error} onClick={() => open('customers')}><Plus size={15} /> Add customer</button></>}</div>
@@ -77,5 +77,5 @@ export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQ
         const set = (value: string) => setEdit({ ...edit, row: { ...edit.row, [f.key]: value } });
         return <label className={f.type === 'textarea' ? 'span-2' : ''} key={f.key}>{f.label}{f.required ? ' *' : ''}{f.type === 'textarea' ? <textarea disabled={saving} maxLength={10000} rows={3} value={edit.row[f.key] || ''} onChange={e => set(e.target.value)} /> : ['sites','equipment','books'].includes(f.type || '') ? <select disabled={saving} required={f.required} value={edit.row[f.key] || (f.type === 'books' ? 'standard' : '')} onChange={e => set(e.target.value)}>{f.type !== 'books' && <option value="">Select {f.required ? 'a record' : '(optional)'}</option>}{(f.type === 'books' ? data.books : history[f.type!] || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select> : <input disabled={saving} required={f.required} maxLength={1000} type={f.type || 'text'} min={f.type === 'number' ? 0 : undefined} max={f.type === 'number' ? 999999999 : undefined} step={f.type === 'number' ? '0.01' : undefined} value={edit.row[f.key] ?? ''} onChange={e => set(e.target.value)} />}</label>;
       })}</div>{saveError && <p className="form-error" role="alert">{saveError}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button></form></div>}
-  </>;
+  </div>;
 }
