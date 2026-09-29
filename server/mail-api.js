@@ -27,11 +27,11 @@ function unseal(value, kind, env) {
     return data;
   } catch { throw new MailError(400, 'This review or page has expired. Refresh and try again.'); }
 }
-async function readBody(req) {
+async function readBody(req, maxBytes = 100000) {
   let raw = '';
   if (req.body !== undefined) raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-  else for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > 100000) throw new MailError(413, 'Message is too large.'); }
-  if (Buffer.byteLength(raw) > 100000) throw new MailError(413, 'Message is too large.');
+  else for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > maxBytes) throw new MailError(413, 'Message is too large.'); }
+  if (Buffer.byteLength(raw) > maxBytes) throw new MailError(413, 'Message is too large.');
   try { return JSON.parse(raw || '{}'); } catch { throw new MailError(400, 'Invalid request.'); }
 }
 function content(value) { if (typeof value !== 'string' || !value.trim() || value.length > 50000) throw new MailError(400, 'Enter a message of up to 50,000 characters.'); return value; }
@@ -92,7 +92,7 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         res.statusCode = 200; return res.end(data);
       }
     } else {
-      const input = await readBody(req);
+      const input = await readBody(req, action === 'attach' ? 4300000 : 100000);
       if (action === 'read') {
         if (typeof input.isRead !== 'boolean') throw new MailError(400, 'Read state is required.');
         await graph(`/messages/${segment(input.id)}`, { method: 'PATCH', body: { isRead: input.isRead } }); return respond(res, 200, { ok: true });
@@ -117,6 +117,17 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
           record = await graph('/messages', { method: 'POST', body: { subject: input.subject, toRecipients: recipients(input.to), body } });
         }
         return respond(res, 200, { record, version: version(record) });
+      }
+      if (action === 'attach') {
+        const id = segment(input.id);
+        if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 200 || /[\r\n]/.test(input.name) || typeof input.contentType !== 'string' || input.contentType.length > 200 || typeof input.contentBytes !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(input.contentBytes)) throw new MailError(400, 'Invalid attachment.');
+        const bytes = Buffer.from(input.contentBytes, 'base64');
+        if (!bytes.length || bytes.length > 3 * 1024 * 1024) throw new MailError(413, 'Attach a file under 3 MB.');
+        const current = await graph(`/messages/${id}?$select=id,isDraft,changeKey`);
+        if (!current.isDraft) throw new MailError(409, 'This message is no longer a draft.');
+        await graph(`/messages/${id}/attachments`, { method: 'POST', body: { '@odata.type': '#microsoft.graph.fileAttachment', name: input.name.trim(), contentType: input.contentType || 'application/octet-stream', contentBytes: input.contentBytes } });
+        const updated = await graph(`/messages/${id}?$select=id,isDraft,changeKey,hasAttachments`);
+        return respond(res, 200, { version: version(updated), hasAttachments: updated.hasAttachments });
       }
       if (action === 'review') {
         const record = await graph(`/messages/${segment(input.id)}?$select=${fields},body`, { text: true });

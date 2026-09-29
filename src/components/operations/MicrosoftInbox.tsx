@@ -29,6 +29,8 @@ import {
   type Page,
 } from "../../lib/microsoft-mail";
 import { useMailConnection, MailConnectionCard } from "./MailConnection";
+import { crmRequest } from '../../lib/crm-client';
+import { buildCustomerQuotationPdf, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
 import type { MailProviderName } from "./MailConnection";
 
 function formatMailListDate(message: MicrosoftMessage) {
@@ -45,6 +47,12 @@ function formatMailListDate(message: MicrosoftMessage) {
     day: "numeric",
   });
 }
+async function attachmentBase64(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let start = 0; start < bytes.length; start += 16384) binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
+  return btoa(binary);
+}
 
 export function ConnectedInbox({
   preview = false,
@@ -60,21 +68,32 @@ export function ConnectedInbox({
   onQuote: (id: string) => void;
 }) {
   const connection = useMailConnection();
-  const [mailboxView, setMailboxView] = useState(false);
+  const [view, setView] = useState<'inbox' | 'ai' | 'sent'>('inbox');
   if (preview) return <>{children}</>;
-  if (!mailboxView) return <TrackedInbox focusId={focusId} customers={customers} onQuote={onQuote} provider={connection.provider || 'microsoft'} onMailbox={() => setMailboxView(true)} />;
-  if (connection.mode !== "live") return <><button className="secondary" onClick={() => setMailboxView(false)}>Back to tracked conversations</button><MailConnectionCard /></>;
+  const changeView = (next: typeof view) => {
+    if (next === view) return;
+    const navigation = new Event('dcx-before-navigate', { cancelable: true });
+    window.dispatchEvent(navigation);
+    if (!navigation.defaultPrevented) setView(next);
+  };
   return (
-    <>
-    <button className="secondary" onClick={() => setMailboxView(false)}>Back to tracked conversations</button>
-    <MicrosoftInbox
-      customers={customers}
-      onQuote={onQuote}
-      mailbox={connection.mailbox!}
-      inboxId={connection.inboxId || "inbox"}
-      provider={connection.provider || "microsoft"}
-    />
-    </>
+    <div className="mail-workspace">
+      <nav className="mail-workspace-tabs" aria-label="Email views">
+        <button className={view === 'inbox' ? 'active' : ''} aria-current={view === 'inbox' ? 'page' : undefined} onClick={() => changeView('inbox')}><Inbox size={16}/> Inbox</button>
+        <button className={view === 'ai' ? 'active' : ''} aria-current={view === 'ai' ? 'page' : undefined} onClick={() => changeView('ai')}><FileText size={16}/> AI Draft Replies</button>
+        <button className={view === 'sent' ? 'active' : ''} aria-current={view === 'sent' ? 'page' : undefined} onClick={() => changeView('sent')}><Send size={16}/> Sent</button>
+      </nav>
+      {view === 'ai' ? <TrackedInbox focusId={focusId} customers={customers} onQuote={onQuote} provider={connection.provider || 'microsoft'} onMailbox={() => changeView('inbox')} onSent={() => changeView('sent')} /> : connection.mode !== 'live' ? <MailConnectionCard /> : <MicrosoftInbox
+        key={view}
+        customers={customers}
+        onQuote={onQuote}
+        mailbox={connection.mailbox!}
+        inboxId={connection.inboxId || 'inbox'}
+        initialFolder={view === 'sent' ? (connection.provider === 'hostinger' ? 'INBOX.Sent' : 'sentitems') : connection.inboxId || 'inbox'}
+        sentOnly={view === 'sent'}
+        provider={connection.provider || 'microsoft'}
+      />}
+    </div>
   );
 }
 function MicrosoftInbox({
@@ -82,16 +101,20 @@ function MicrosoftInbox({
   onQuote,
   mailbox,
   inboxId,
+  initialFolder,
+  sentOnly,
   provider,
 }: {
   customers: Client[];
   onQuote: (id: string) => void;
   mailbox: string;
   inboxId: string;
+  initialFolder: string;
+  sentOnly: boolean;
   provider: MailProviderName;
 }) {
   const [folders, setFolders] = useState<MicrosoftFolder[]>([]);
-  const [folder, setFolder] = useState(inboxId);
+  const [folder, setFolder] = useState(initialFolder);
   const [messages, setMessages] = useState<MicrosoftMessage[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
@@ -412,7 +435,7 @@ function MicrosoftInbox({
         </span>
         <span>{providerName} is the source of your email</span>
       </div>
-      <div className="outlook-shell">
+      <div className={`outlook-shell ${sentOnly ? 'sent-only' : ''}`}>
         <aside className="mail-folders">
           <div className="mail-account">
             <strong>{mailbox}</strong>
@@ -500,7 +523,7 @@ function MicrosoftInbox({
           </div>
           <div className="list-caption">
             <strong>
-              {folders.find((f) => f.id === folder)?.displayName || "Inbox"}
+              {folders.find((f) => f.id === folder)?.displayName || (sentOnly ? 'Sent' : 'Inbox')}
             </strong>
             <span>{groups.length} conversations</span>
           </div>
@@ -662,6 +685,7 @@ function MicrosoftInbox({
               }}
               onChanged={afterAction}
               provider={provider}
+              customers={customers}
             />
           </section>
         </div>
@@ -970,6 +994,8 @@ function LiveConversation({
             }}
             onChanged={onChanged}
             provider={provider}
+            customers={customers}
+            customerId={matches.length === 1 ? matches[0].id : undefined}
           />
         )}
       </div>
@@ -1131,6 +1157,8 @@ function DraftEditor({
   onDirty,
   onChanged,
   provider,
+  customers,
+  customerId,
 }: {
   replyTo?: string;
   replyAll?: boolean;
@@ -1138,6 +1166,8 @@ function DraftEditor({
   onDirty: (v: boolean) => void;
   onChanged: () => void;
   provider: MailProviderName;
+  customers: Client[];
+  customerId?: string;
 }) {
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
@@ -1155,6 +1185,11 @@ function DraftEditor({
     approval: string;
   }>();
   const [sent, setSent] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const [quotationOptions, setQuotationOptions] = useState<CustomerQuotation[] | null>(null);
+  const [quotationBusy, setQuotationBusy] = useState(false);
+  const [quotationCustomerId, setQuotationCustomerId] = useState(customerId || '');
+  const [reviewAttachments, setReviewAttachments] = useState<MailAttachment[]>([]);
   const [ready, setReady] = useState(!existing);
   useEffect(() => {
     if (!existing) return;
@@ -1207,6 +1242,23 @@ function DraftEditor({
     setReview(undefined);
     setNotice("");
   };
+  async function loadQuotations() {
+    if (!quotationCustomerId) return;
+    setQuotationBusy(true); setError('');
+    try { const result = await crmRequest(`action=quotations&customer_id=${encodeURIComponent(quotationCustomerId)}`); setQuotationOptions(result.records || []); }
+    catch (cause) { setError((cause as Error).message); }
+    finally { setQuotationBusy(false); }
+  }
+  async function attachQuotation(quote: CustomerQuotation) {
+    setQuotationBusy(true); setError('');
+    try {
+      const pdf = await buildCustomerQuotationPdf(quote, await quotationLogo());
+      const file = new File([pdf.output('blob')], `DCX-Estimate-${quote.estimate_number}.pdf`, { type: 'application/pdf' });
+      if (files.length >= 5 || files.reduce((size, item) => size + item.size, file.size) > 3 * 1024 * 1024) throw new Error('Attach up to five files, with a combined size under 3 MB.');
+      setFiles(current => [...current, file]); setQuotationOptions(null); change();
+    } catch (cause) { setError((cause as Error).message); }
+    finally { setQuotationBusy(false); }
+  }
   async function persistDraft() {
     const data = await mailRequest(
       "draft",
@@ -1216,10 +1268,17 @@ function DraftEditor({
         : { replyTo, replyAll, to, subject, content },
     );
     setSaved(data);
+    let current = data as { record: MicrosoftMessage; version: string };
+    for (const file of files) {
+      const attached = await mailRequest<{ version: string; hasAttachments: boolean }>('attach', {}, { id: current.record.id, name: file.name, contentType: file.type || 'application/octet-stream', contentBytes: await attachmentBase64(file) });
+      current = { record: { ...current.record, hasAttachments: attached.hasAttachments }, version: attached.version };
+      setSaved(current);
+      setFiles(remaining => remaining.filter(item => item !== file));
+    }
     setDirty(false);
     onDirty(false);
     onChanged();
-    return data as { record: MicrosoftMessage; version: string };
+    return current;
   }
   async function save() {
     setBusy(true);
@@ -1243,8 +1302,10 @@ function DraftEditor({
     setError("");
     setNotice("");
     try {
-      const current = !saved || dirty ? await persistDraft() : saved;
-      setReview(await mailRequest("review", {}, { id: current.record.id }));
+      const current = !saved || dirty || files.length ? await persistDraft() : saved;
+      const prepared = await mailRequest<{ record: MicrosoftMessage; approval: string }>("review", {}, { id: current.record.id });
+      setReviewAttachments(prepared.record.hasAttachments ? (await mailRequest<Page<MailAttachment>>('attachments', { id: current.record.id })).records : []);
+      setReview(prepared);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1354,11 +1415,12 @@ function DraftEditor({
             }}
             placeholder="Write your message…"
           />
+          {provider === 'microsoft' && <div className="mail-file-picker"><label><Paperclip size={15}/> Attach files<input type="file" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);event.target.value='';if(files.length+incoming.length>5||[...files,...incoming].reduce((size,file)=>size+file.size,0)>3*1024*1024){setError('Attach up to five files, with a combined size under 3 MB.');return;}setFiles(current=>[...current,...incoming]);if(incoming.length)change();}}/></label><select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotationOptions(null);}}><option value="">Choose customer for quotation</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select><button className="secondary compact" type="button" disabled={busy||quotationBusy||!quotationCustomerId} onClick={()=>void loadQuotations()}>{quotationBusy?'Loading…':'Attach saved quotation'}</button>{quotationOptions&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotationOptions.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotationOptions.length?'Choose a quotation PDF':'No saved quotations for this customer'}</option>{quotationOptions.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} · {quote.status}</option>)}</select>}{files.map((file,index)=><span key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>{setFiles(current=>current.filter((_,i)=>i!==index));change();}}><X size={13}/></button></span>)}</div>}
           <div className="button-row">
             <button
               className="secondary"
               disabled={
-                busy || !ready || !content.trim() || (!!saved && !dirty)
+                busy || !ready || !content.trim() || (!!saved && !dirty && !files.length)
               }
               onClick={save}
             >
@@ -1404,10 +1466,7 @@ function DraftEditor({
           </p>
           <p className="pre-line">{review.record.body?.content}</p>
           {review.record.hasAttachments && (
-            <p>
-              This draft includes attachments. Review them in your mailbox
-              before sending.
-            </p>
+            <div className="mail-review-attachments"><strong>Attachments:</strong> {reviewAttachments.length ? reviewAttachments.map(item => item.name).join(', ') : 'Review attachments in your mailbox before sending.'}</div>
           )}
           <div className="button-row">
             <button className="primary" disabled={busy} onClick={send}>

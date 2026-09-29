@@ -5,7 +5,7 @@ A private operations dashboard for DCX Technical Inc.'s UPS maintenance, battery
 ## What the software does
 
 - **Overview:** conversation queues, follow-ups and email performance reporting for 1, 7 or 30 days. Reporting defaults to Eastern Time (Toronto) and offers Canadian timezones only, regardless of the computer's timezone. Report sync timestamps use the selected Canadian timezone too.
-- **Inbox:** connected Outlook or Hostinger mailbox access and Supabase-backed conversations, customer links, workflow status, reply revisions, approval records and send tracking.
+- **Inbox:** Inbox, AI Draft Replies, and Sent views. Connected Outlook conversations can be reopened and replied to; the AI queue contains only drafts awaiting owner review. Outlook replies accept local file attachments, including generated customer quotation PDFs. Supabase retains customer links, workflow status, reply revisions, approval records and send tracking.
 - **Customers:** companies, contacts, sites, equipment, completed purchases, service history and proposal PDFs.
 - **Cost calculator:** supplier and manual costs, quantities, exchange divisors, gross margins, flat selling items, shipping, brokerage, tax and CAD-only quotations and exports.
 - **Tender agent:** a navigation tab displaying **Coming soon**. Tender automation is not implemented.

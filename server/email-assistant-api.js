@@ -43,7 +43,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     if (req.method === 'GET' && url.searchParams.get('action') === 'thread') {
       const id = url.searchParams.get('id');
       if (!uuid(id)) return reply(res, 400, { error: 'Invalid conversation.' });
-      const thread = await checked(db.from('email_threads').select('id,subject,status,priority,last_message_at,mailbox_id').eq('id', id).maybeSingle());
+      const thread = await checked(db.from('email_threads').select('id,subject,status,priority,customer_id,last_message_at,mailbox_id').eq('id', id).maybeSingle());
       if (!thread) return reply(res, 404, { error: 'Conversation not found.' });
       const draft = await checked(db.from('email_drafts').select('id,thread_id,current_body,original_ai_body,to_addresses,subject,status,updated_at').eq('thread_id', id).neq('status', 'sent').order('updated_at', { ascending: false }).limit(1).maybeSingle());
       if (!actionable(draft)) return reply(res, 404, { error: 'This conversation has no current AI reply draft.' });

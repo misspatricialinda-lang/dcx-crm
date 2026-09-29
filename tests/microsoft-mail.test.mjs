@@ -76,6 +76,22 @@ test("missing mail credentials produces setup status, never a simulated live mai
   assert.deepEqual((await (await f.get("status")).json()).configured, false);
   assert.equal((await f.get("messages")).status, 503);
 });
+test("attaches a local file only to an Outlook draft", async (t) => {
+  const calls = [];
+  const f = await fixture(t, async (path, options = {}) => {
+    calls.push({ path, options });
+    if (path.endsWith('/attachments')) return { id: 'attachment-1' };
+    return { id: 'draft-1', isDraft: true, changeKey: calls.length === 1 ? 'before' : 'after', hasAttachments: true };
+  });
+  const attached = await f.post('attach', { id: 'draft-1', name: 'quote.pdf', contentType: 'application/pdf', contentBytes: Buffer.from('PDF').toString('base64') });
+  assert.equal(attached.status, 200);
+  assert.equal((await attached.json()).hasAttachments, true);
+  assert.equal(calls.filter(call => call.path.endsWith('/attachments')).length, 1);
+  assert.equal(calls[1].options.body.name, 'quote.pdf');
+  const invalid = await f.post('attach', { id: 'draft-1', name: 'empty.pdf', contentType: 'application/pdf', contentBytes: '' });
+  assert.equal(invalid.status, 413);
+  assert.equal(calls.length, 3);
+});
 test("conversation requests use Microsoft ID across folders; pagination is signed and cannot become a proxy", async (t) => {
   const calls = [];
   const continuation =
