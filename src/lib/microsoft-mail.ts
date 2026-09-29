@@ -16,6 +16,7 @@ export interface MicrosoftMessage {
   isRead: boolean;
   isDraft: boolean;
   importance: string;
+  flag?: { flagStatus: 'notFlagged' | 'flagged' | 'complete' };
   hasAttachments: boolean;
   parentFolderId: string;
   webLink?: string;

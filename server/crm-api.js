@@ -138,6 +138,17 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
       const history = Object.fromEntries(await Promise.all(Object.keys(entities).filter(e => e !== 'customers').map(async e => [e, await allRows(db, e, customer.id)])));
       return respond(res, 200, { status: 'matched', customer, ...history, message: 'Exact contact match only. Confirm which site/equipment the request concerns; historical ownership is not guaranteed.' });
     }
+    if (req.method === 'GET' && action === 'recipient-suggestions') {
+      const [customers, contacts] = await Promise.all([
+        allRows(db, 'customers'),
+        allRows(db, 'contacts'),
+      ]);
+      const records = [
+        ...customers.filter(row => row.email).map(row => ({ name: row.contact || row.name, email: row.email, company: row.name, source: 'CRM customer' })),
+        ...contacts.filter(row => row.email).map(row => ({ name: row.name, email: row.email, company: customers.find(customer => customer.id === row.customer_id)?.name || '', source: 'CRM contact' })),
+      ];
+      return respond(res, 200, { records });
+    }
     const entity = url.searchParams.get('entity') || 'customers';
     if (!Object.hasOwn(entities, entity)) return respond(res, 400, { error: 'Unknown record type.' });
     if (req.method === 'GET') {

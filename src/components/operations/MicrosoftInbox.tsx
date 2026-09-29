@@ -4,8 +4,13 @@ import DOMPurify from "dompurify";
 import {
   Archive,
   ChevronDown,
-  ExternalLink,
+  Folder,
+  Mail,
+  ShieldAlert,
+  Trash2,
   FileText,
+  Flag,
+  Forward,
   Inbox,
   MailOpen,
   Paperclip,
@@ -14,6 +19,7 @@ import {
   Reply,
   Search,
   Send,
+  Sparkles,
   X,
 } from "lucide-react";
 import type { Client } from "../../types/operations";
@@ -22,7 +28,6 @@ import {
   groupMicrosoftMessages,
   mailTimestamp,
   mailRequest,
-  outlookLink,
   type MailAttachment,
   type MicrosoftFolder,
   type MicrosoftMessage,
@@ -47,11 +52,52 @@ function formatMailListDate(message: MicrosoftMessage) {
     day: "numeric",
   });
 }
+const folderOrder = ['inbox', 'junkemail', 'drafts', 'sentitems', 'deleteditems', 'archive', 'conversationhistory', 'outbox'];
+function folderKey(folder: MicrosoftFolder) { return `${folder.id} ${folder.displayName}`.toLowerCase().replace(/[^a-z]/g, ''); }
+function folderRank(folder: MicrosoftFolder) {
+  const key = folderKey(folder);
+  const index = folderOrder.findIndex(item => key.includes(item));
+  return index < 0 ? 100 : index;
+}
+function FolderIcon({ folder }: { folder: MicrosoftFolder }) {
+  const rank = folderRank(folder);
+  const Icon = rank === 0 ? Inbox : rank === 1 ? ShieldAlert : rank === 2 ? PenLine : rank === 3 ? Send : rank === 4 ? Trash2 : rank === 5 ? Archive : rank === 7 ? Mail : Folder;
+  return <Icon size={16} aria-hidden="true" />;
+}
 async function attachmentBase64(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = '';
   for (let start = 0; start < bytes.length; start += 16384) binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
   return btoa(binary);
+}
+type RecipientSuggestion = { name: string; email: string; company?: string; source: string };
+const recipientValue = (list?: MicrosoftMessage['toRecipients']) => {
+  const addresses = addressList(list);
+  return addresses ? `${addresses}, ` : '';
+};
+const textHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\n/g, '<br>');
+function RecipientField({ label, value, onChange, suggestions, disabled, placeholder, actions }: {
+  label: string; value: string; onChange: (value: string) => void; suggestions: RecipientSuggestion[]; disabled: boolean; placeholder?: string; actions?: React.ReactNode;
+}) {
+  const [focused, setFocused] = useState(false);
+  const parts = value.split(/[;,]/);
+  const chosen = parts.slice(0, -1).map(item => item.trim()).filter(Boolean);
+  const rawQuery = parts[parts.length - 1] || '';
+  const query = rawQuery.trim();
+  const prefix = chosen.length ? `${chosen.join(', ')}, ` : '';
+  const selected = new Set(chosen.map(item => item.toLowerCase()));
+  const matches = focused && query ? suggestions.filter(item => !selected.has(item.email.toLowerCase()) && `${item.name} ${item.email} ${item.company || ''}`.toLowerCase().includes(query.toLowerCase())).slice(0, 6) : [];
+  return <div className="mail-recipient-field">
+    <div className="mail-recipient-header"><label htmlFor={`mail-${label.toLowerCase()}`}>{label}</label>{actions}</div>
+    <div className="mail-recipient-box">
+      {chosen.map((address, index) => <span className="mail-recipient-chip" key={`${address}-${index}`}>{address}<button type="button" aria-label={`Remove ${address} from ${label}`} disabled={disabled} onClick={() => onChange(`${chosen.filter((_, i) => i !== index).join(', ')}${query ? `${chosen.length > 1 ? ', ' : ''}${query}` : chosen.length > 1 ? ', ' : ''}`)}><X size={12}/></button></span>)}
+      <input id={`mail-${label.toLowerCase()}`} aria-label={`${label} emails`} autoComplete="off" value={rawQuery} disabled={disabled} placeholder={chosen.length ? '' : placeholder || 'Type a name or email'} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={event => onChange(prefix + event.target.value)} onKeyDown={event => {
+        if (event.key === 'Enter' && matches.length) { event.preventDefault(); onChange(`${prefix}${matches[0].email}, `); }
+        else if ((event.key === 'Enter' || event.key === 'Tab') && query.includes('@')) { if (event.key === 'Enter') event.preventDefault(); onChange(`${prefix}${query}, `); }
+      }}/>
+    </div>
+    {!!matches.length && <div className="mail-recipient-suggestions" role="listbox" aria-label={`${label} suggestions`}>{matches.map(item => <button type="button" role="option" aria-selected="false" key={item.email} onMouseDown={event => event.preventDefault()} onClick={() => { onChange(`${prefix}${item.email}, `); setFocused(true); }}><strong>{item.name}</strong><span>{item.email}</span><small>{item.company || item.source}</small></button>)}</div>}
+  </div>;
 }
 
 export function ConnectedInbox({
@@ -68,8 +114,20 @@ export function ConnectedInbox({
   onQuote: (id: string) => void;
 }) {
   const connection = useMailConnection();
-  const [view, setView] = useState<'inbox' | 'ai' | 'sent'>('inbox');
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLElement>(null);
+  const [view, setView] = useState<'inbox' | 'ai' | 'drafts' | 'sent' | 'archive' | 'deleted'>('inbox');
   useEffect(() => { if (focusId) setView('ai'); }, [focusId]);
+  useEffect(() => {
+    const tabs = tabsRef.current;
+    const workspace = workspaceRef.current;
+    if (!tabs || !workspace) return;
+    const update = () => workspace.style.setProperty('--mail-tabs-height', `${tabs.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(tabs);
+    return () => observer.disconnect();
+  }, [preview]);
   if (preview) return <>{children}</>;
   const changeView = (next: typeof view) => {
     if (next === view) return;
@@ -78,11 +136,14 @@ export function ConnectedInbox({
     if (!navigation.defaultPrevented) setView(next);
   };
   return (
-    <div className="mail-workspace">
-      <nav className="mail-workspace-tabs" aria-label="Email views">
+    <div className="mail-workspace" ref={workspaceRef}>
+      <nav className="mail-workspace-tabs" ref={tabsRef} aria-label="Email views">
         <button className={view === 'inbox' ? 'active' : ''} aria-current={view === 'inbox' ? 'page' : undefined} onClick={() => changeView('inbox')}><Inbox size={16}/> Inbox</button>
         <button className={view === 'ai' ? 'active' : ''} aria-current={view === 'ai' ? 'page' : undefined} onClick={() => changeView('ai')}><FileText size={16}/> AI Draft Replies</button>
+        {connection.provider !== 'hostinger' && <button className={view === 'drafts' ? 'active' : ''} aria-current={view === 'drafts' ? 'page' : undefined} onClick={() => changeView('drafts')}><PenLine size={16}/> Drafts</button>}
         <button className={view === 'sent' ? 'active' : ''} aria-current={view === 'sent' ? 'page' : undefined} onClick={() => changeView('sent')}><Send size={16}/> Sent</button>
+        {connection.provider !== 'hostinger' && <><button className={view === 'archive' ? 'active' : ''} aria-current={view === 'archive' ? 'page' : undefined} onClick={() => changeView('archive')}><Archive size={16}/> Archive</button>
+        <button className={view === 'deleted' ? 'active' : ''} aria-current={view === 'deleted' ? 'page' : undefined} onClick={() => changeView('deleted')}><Trash2 size={16}/> Deleted</button></>}
       </nav>
       {view === 'ai' ? <TrackedInbox focusId={focusId} customers={customers} onQuote={onQuote} provider={connection.provider || 'microsoft'} onMailbox={() => changeView('inbox')} onSent={() => changeView('sent')} /> : connection.mode !== 'live' ? <MailConnectionCard /> : <MicrosoftInbox
         key={view}
@@ -90,7 +151,7 @@ export function ConnectedInbox({
         onQuote={onQuote}
         mailbox={connection.mailbox!}
         inboxId={connection.inboxId || 'inbox'}
-        initialFolder={view === 'sent' ? (connection.provider === 'hostinger' ? 'INBOX.Sent' : 'sentitems') : connection.inboxId || 'inbox'}
+        initialFolder={view === 'sent' ? (connection.provider === 'hostinger' ? 'INBOX.Sent' : 'sentitems') : view === 'drafts' ? 'drafts' : view === 'archive' ? 'archive' : view === 'deleted' ? 'deleteditems' : connection.inboxId || 'inbox'}
         sentOnly={view === 'sent'}
         provider={connection.provider || 'microsoft'}
       />}
@@ -124,6 +185,18 @@ function MicrosoftInbox({
   const [error, setError] = useState("");
   const [updated, setUpdated] = useState("");
   const [compose, setCompose] = useState(false);
+  const ribbonRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const ribbon = ribbonRef.current;
+    const workspace = ribbon?.closest<HTMLElement>('.mail-workspace');
+    if (!ribbon || !workspace) return;
+    const update = () => workspace.style.setProperty('--mail-ribbon-height', `${ribbon.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(ribbon);
+    return () => observer.disconnect();
+  }, []);
+  const [editorRequest, setEditorRequest] = useState<{ id: string; kind: 'reply' | 'replyAll' | 'forward' | 'edit'; nonce: number }>();
   const [revision, setRevision] = useState(0);
   const [openThreads, setOpenThreads] = useState<string[]>([]);
   const [threadMessages, setThreadMessages] = useState<
@@ -132,6 +205,7 @@ function MicrosoftInbox({
   const dirty = useRef(false);
   const listSequence = useRef(0);
   const loading = useRef(false);
+  const manualUnread = useRef(new Set<string>());
   const canLeave = () =>
     !dirty.current ||
     window.confirm(
@@ -144,7 +218,7 @@ function MicrosoftInbox({
       page = await mailRequest("page", { cursor: page.next });
       all.push(...page.records);
     }
-    setFolders(all);
+    setFolders(all.sort((a, b) => folderRank(a) - folderRank(b) || a.displayName.localeCompare(b.displayName)));
   }, []);
   const refresh = useCallback(
     async (cursor?: string) => {
@@ -289,7 +363,7 @@ function MicrosoftInbox({
   useEffect(() => {
     if (!active) return;
     const unread = active.messages.filter(
-      (message) => !message.isRead && !message.isDraft,
+      (message) => !message.isRead && !message.isDraft && !manualUnread.current.has(message.id),
     );
     if (!unread.length) return;
     const timer = window.setTimeout(() => {
@@ -335,24 +409,39 @@ function MicrosoftInbox({
     }, 650);
     return () => window.clearTimeout(timer);
   }, [active?.id, unreadSignature]);
-  async function quickAction(type: "read" | "move") {
+  async function quickAction(type: "read" | "move" | "flag", destinationId?: string) {
     if (!active?.latest || busy) return;
+    if (dirty.current) { setError('Save your reply before changing this message.'); return; }
     setBusy(true);
     setError("");
     try {
+      const target = active.latest;
+      if (type === 'read') {
+        if (target.isRead) manualUnread.current.add(target.id);
+        else manualUnread.current.delete(target.id);
+      }
       await mailRequest(
         type,
         {},
         type === "read"
-          ? { id: active.latest.id, isRead: true }
-          : { id: active.latest.id },
+          ? { id: target.id, isRead: !target.isRead }
+          : type === 'flag'
+            ? { id: target.id, flagged: target.flag?.flagStatus !== 'flagged' }
+            : { id: target.id, destinationId },
       );
       afterAction();
     } catch (e) {
+      if (type === 'read' && active?.latest) manualUnread.current.delete(active.latest.id);
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+  function openSelectedEditor(kind: 'reply' | 'replyAll' | 'forward' | 'edit') {
+    if (!active?.latest || !canLeave()) return;
+    dirty.current = false;
+    const source = kind === 'edit' ? active.latest : [...active.messages].reverse().find(message => !message.isDraft && message.from?.emailAddress.address?.toLowerCase() !== mailbox.toLowerCase()) || active.latest;
+    setEditorRequest({ id: source.id, kind, nonce: Date.now() });
   }
   async function expandFolder(f: MicrosoftFolder) {
     setError("");
@@ -381,8 +470,6 @@ function MicrosoftInbox({
       setError((e as Error).message);
     }
   }
-  const providerName =
-    provider === "hostinger" ? "Hostinger Mail" : "Microsoft Outlook";
   return (
     <>
       {error && (
@@ -390,7 +477,7 @@ function MicrosoftInbox({
           {error} Existing messages may be out of date.
         </div>
       )}
-      <div className="outlook-ribbon">
+      <div className="outlook-ribbon" ref={ribbonRef}>
         <button
           className="outlook-new"
           onClick={() => {
@@ -406,12 +493,23 @@ function MicrosoftInbox({
         <button disabled={!active || busy} onClick={() => quickAction("move")}>
           <Archive size={16} /> Archive
         </button>
+        <button disabled={!active || busy} onClick={() => quickAction("move", "deleteditems")}>
+          <Trash2 size={16} /> Delete
+        </button>
+        <label className="ribbon-move"><Folder size={16} /><select aria-label="Move selected message to folder" disabled={!active || busy} value="" onChange={event => { const destinationId = event.target.value; if (destinationId) void quickAction('move', destinationId); event.target.value = ''; }}><option value="">Move to</option>{folders.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
+        <span className="ribbon-separator" />
+        {active?.latest.isDraft ? <button disabled={busy} onClick={() => openSelectedEditor('edit')}><PenLine size={16}/> Edit draft</button> : <>
+          <button disabled={!active || busy} onClick={() => openSelectedEditor('reply')}><Reply size={16}/> Reply</button>
+          <button disabled={!active || busy} onClick={() => openSelectedEditor('replyAll')}><Reply size={16}/> Reply all</button>
+          {provider === 'microsoft' && <button disabled={!active || busy} onClick={() => openSelectedEditor('forward')}><Forward size={16}/> Forward</button>}
+        </>}
         <button
-          disabled={!active || busy || active.latest.isRead}
+          disabled={!active || busy}
           onClick={() => quickAction("read")}
         >
-          <MailOpen size={16} /> Mark read
+          <MailOpen size={16} /> {active?.latest.isRead ? 'Mark unread' : 'Mark read'}
         </button>
+        {provider === 'microsoft' && <button disabled={!active || busy} onClick={() => quickAction('flag')}><Flag size={16} fill={active?.latest.flag?.flagStatus === 'flagged' ? 'currentColor' : 'none'} /> {active?.latest.flag?.flagStatus === 'flagged' ? 'Unflag' : 'Flag'}</button>}
         <span className="ribbon-spacer" />
         <button
           disabled={busy}
@@ -434,9 +532,8 @@ function MicrosoftInbox({
               ? `Last refreshed ${updated} · Updates every minute`
               : "Loading mailbox…"}
         </span>
-        <span>{providerName} is the source of your email</span>
       </div>
-      <div className={`outlook-shell ${sentOnly ? 'sent-only' : ''}`}>
+      <div className="outlook-shell">
         <aside className="mail-folders">
           <div className="mail-account">
             <strong>{mailbox}</strong>
@@ -462,6 +559,7 @@ function MicrosoftInbox({
                   dirty.current = false;
                   setFolder(inboxId);
                   setSelected("");
+                  setEditorRequest(undefined);
                 }
               }}
             >
@@ -482,9 +580,11 @@ function MicrosoftInbox({
                     setFolder(f.id);
                     setSelected("");
                     setQuery("");
+                    setEditorRequest(undefined);
                   }
                 }}
               >
+                <FolderIcon folder={f} />
                 <span>{f.displayName}</span>
                 {f.unreadItemCount > 0 && <b>{f.unreadItemCount}</b>}
               </button>
@@ -518,13 +618,9 @@ function MicrosoftInbox({
               }}
             />
           </div>
-          <div className="mail-list-tabs">
-            <strong>Focused</strong>
-            <span>All mail</span>
-          </div>
           <div className="list-caption">
             <strong>
-              {folders.find((f) => f.id === folder)?.displayName || (sentOnly ? 'Sent' : 'Inbox')}
+              {folders.find((f) => f.id === folder)?.displayName || ({sentitems:'Sent Items',drafts:'Drafts',archive:'Archive',deleteditems:'Deleted Items'}[folder] || (sentOnly ? 'Sent' : 'Inbox'))}
             </strong>
             <span>{groups.length} conversations</span>
           </div>
@@ -539,7 +635,9 @@ function MicrosoftInbox({
                   onClick={() => {
                     if (canLeave()) {
                       dirty.current = false;
+                      if (selected !== t.id) manualUnread.current.clear();
                       setSelected(t.id);
+                      if (selected !== t.id) setEditorRequest(undefined);
                       if (hasThread)
                         setOpenThreads((old) =>
                           old.includes(t.id)
@@ -590,10 +688,17 @@ function MicrosoftInbox({
                       {t.latest.importance === "high" && (
                         <span className="pill red">High</span>
                       )}
+                      {t.latest.flag?.flagStatus === 'flagged' && <Flag size={13} fill="currentColor" aria-label="Flagged" />}
                       {t.latest.hasAttachments && <Paperclip size={13} />}
                     </footer>
                   </span>
                 </button>
+                {provider === 'microsoft' && folder !== 'deleteditems' && <button className="thread-delete" type="button" aria-label={`Delete ${t.latest.subject || 'message'}`} title="Move to Deleted Items" disabled={busy} onClick={async () => {
+                  if (!canLeave()) return;
+                  setError('');
+                  try { await mailRequest('move', {}, { id: t.latest.id, destinationId: 'deleteditems' }); afterAction(); }
+                  catch (cause) { setError((cause as Error).message); }
+                }}><Trash2 size={16}/></button>}
                 {isOpen && hasThread && (
                   <div
                     className="thread-children"
@@ -650,6 +755,10 @@ function MicrosoftInbox({
               dirty.current = v;
             }}
             provider={provider}
+            mailbox={mailbox}
+            folders={folders}
+            editorRequest={editorRequest}
+            onMarkedUnread={id => manualUnread.current.add(id)}
           />
         ) : (
           <section className="reading-pane empty-state">
@@ -685,7 +794,10 @@ function MicrosoftInbox({
                 dirty.current = v;
               }}
               onChanged={afterAction}
+              onSent={() => { dirty.current = false; setCompose(false); }}
               provider={provider}
+              mailbox={mailbox}
+              onDiscard={() => { dirty.current = false; setCompose(false); }}
               customers={customers}
             />
           </section>
@@ -703,6 +815,10 @@ function LiveConversation({
   onLoaded,
   onDirty,
   provider,
+  mailbox,
+  folders,
+  editorRequest,
+  onMarkedUnread,
 }: {
   id: string;
   revision: number;
@@ -712,6 +828,10 @@ function LiveConversation({
   onLoaded: (id: string, messages: MicrosoftMessage[]) => void;
   onDirty: (v: boolean) => void;
   provider: MailProviderName;
+  mailbox: string;
+  folders: MicrosoftFolder[];
+  editorRequest?: { id: string; kind: 'reply' | 'replyAll' | 'forward' | 'edit'; nonce: number };
+  onMarkedUnread: (id: string) => void;
 }) {
   const [messages, setMessages] = useState<MicrosoftMessage[]>([]);
   const [error, setError] = useState("");
@@ -720,10 +840,38 @@ function LiveConversation({
   const [editor, setEditor] = useState<{
     replyTo?: string;
     replyAll?: boolean;
+    forwardOf?: string;
     existing?: MicrosoftMessage;
+    initialContent?: string;
+    nonce?: number;
   }>();
   const [actionBusy, setActionBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiResult, setAiResult] = useState<{
+    analysis: { summary: string; customer_request: string; next_steps: string[]; reply_needed: boolean; draft_reply: string; uncertainties: string[] };
+    attachments: { name: string; status: string }[];
+    truncated: boolean;
+    message_count: number;
+    knowledge_sources: { id: string }[];
+    reply_to_message_id: string | null;
+  }>();
   const editorDirty = useRef(false);
+  const editorNode = useRef<HTMLDivElement>(null);
+  const handledEditor = useRef<number>();
+  useEffect(() => { setAiResult(undefined); setAiError(''); }, [id, revision]);
+  useEffect(() => {
+    if (!editorRequest || handledEditor.current === editorRequest.nonce) return;
+    if (editorRequest.kind === 'edit') {
+      const draft = messages.find(message => message.id === editorRequest.id);
+      if (!draft) return;
+      edit({ existing: draft });
+    } else {
+      edit(editorRequest.kind === 'forward' ? { forwardOf: editorRequest.id } : { replyTo: editorRequest.id, replyAll: editorRequest.kind === 'replyAll' });
+    }
+    handledEditor.current = editorRequest.nonce;
+  }, [editorRequest?.nonce, messages.length]);
+  useEffect(() => { if (editor) editorNode.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [editor]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -773,13 +921,29 @@ function LiveConversation({
   const matches = customers.filter(
     (c) => c.email && senderEmails.includes(c.email.toLowerCase()),
   );
+  async function analyzeConversation() {
+    setAiBusy(true);
+    setAiError('');
+    try {
+      const response = await fetch('/api/conversation-ai', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: id }) });
+      const raw = await response.text();
+      let result: NonNullable<typeof aiResult> & { error?: string };
+      try { result = JSON.parse(raw); }
+      catch { throw new Error(`Conversation AI server returned an invalid response (${response.status}). Restart the app server and try again.`); }
+      if (!response.ok) throw new Error(result.error || `Could not analyze this conversation (${response.status}).`);
+      if (!result.analysis) throw new Error('Conversation AI returned no analysis. Try again.');
+      setAiResult(result);
+    } catch (cause) { setAiError((cause as Error).message); }
+    finally { setAiBusy(false); }
+  }
   async function action(
     m: MicrosoftMessage,
-    type: "read" | "move",
+    type: "read" | "move" | "flag",
     restore = false,
+    destinationId?: string,
   ) {
-    if (type === "move" && editorDirty.current) {
-      setError("Save your reply before moving a message.");
+    if (type !== "read" && editorDirty.current) {
+      setError("Save your reply before changing this message.");
       return;
     }
     setActionBusy(true);
@@ -790,8 +954,11 @@ function LiveConversation({
         {},
         type === "read"
           ? { id: m.id, isRead: !m.isRead }
-          : { id: m.id, restore },
+          : type === 'flag'
+            ? { id: m.id, flagged: m.flag?.flagStatus !== 'flagged' }
+          : { id: m.id, restore, destinationId },
       );
+      if (type === 'read' && m.isRead) onMarkedUnread(m.id);
       onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -828,18 +995,22 @@ function LiveConversation({
         )}
         {loading && <p role="status">Refreshing conversation…</p>}
         <section className="mail-intelligence">
-          <strong>Conversation overview</strong>
-          <p>
-            {messages.length} messages ·{" "}
-            {messages.filter((m) => m.isDraft).length} saved drafts
-            {messages.some((m) => m.importance === "high")
-              ? " · Marked high importance by the sender"
-              : ""}
-            .
-          </p>
-          <small>
-            AI summaries are not connected. Original messages are shown below.
-          </small>
+          <div className="mail-ai-heading"><strong><Sparkles size={16} /> Conversation AI</strong><button type="button" onClick={() => void analyzeConversation()} disabled={loading || aiBusy || provider !== 'microsoft'}>{aiBusy ? 'Analyzing…' : aiResult ? 'Refresh analysis' : 'Analyze conversation'}</button></div>
+          {!aiResult && !aiBusy && <p>Review this email chain and its supported attachments, then prepare a reply.</p>}
+          {aiError && <p className="notice amber" role="alert">{aiError}</p>}
+          {aiResult && <div className="mail-ai-result">
+            <h3>At a glance</h3><p>{aiResult.analysis.summary}</p>
+            {!!aiResult.analysis.next_steps.length && <p className="mail-ai-action"><strong>Next:</strong> {aiResult.analysis.next_steps.slice(0, 2).join(' · ')}</p>}
+            {aiResult.analysis.reply_needed && aiResult.analysis.draft_reply && aiResult.reply_to_message_id ? <div className="mail-ai-draft">
+              <h3>Suggested reply</h3>
+              <p>{aiResult.analysis.draft_reply}</p>
+              <button type="button" className="primary" onClick={() => edit({ replyTo: aiResult.reply_to_message_id!, initialContent: aiResult.analysis.draft_reply, nonce: Date.now() })}><PenLine size={15} /> Reply with AI draft</button>
+              <small>Opens in the reply editor. You can change it before saving or sending.</small>
+            </div> : <p className="mail-ai-no-reply">No reply suggested for this conversation.</p>}
+            {!!aiResult.analysis.uncertainties.length && <p className="mail-ai-caution"><strong>Check before replying:</strong> {aiResult.analysis.uncertainties.slice(0, 2).join(' · ')}</p>}
+            {!!aiResult.attachments.length && <details className="mail-ai-files"><summary>{aiResult.attachments.filter(file => file.status === 'read').length} of {aiResult.attachments.length} attached files included in analysis</summary><ul>{aiResult.attachments.map((file, index) => <li key={index}>{file.name}: {file.status === 'read' ? 'included' : file.status === 'unsupported' ? 'unsupported file type' : file.status === 'unreadable' ? 'could not be read' : 'size or file limit reached'}</li>)}</ul></details>}
+            {aiResult.truncated && <p className="mail-ai-caution">Only the latest {aiResult.message_count} messages were analyzed.</p>}
+          </div>}
           {matches.length === 1 && (
             <div className="conversation-next">
               <strong>{matches[0].name}</strong>
@@ -851,12 +1022,7 @@ function LiveConversation({
               </button>
             </div>
           )}
-          {matches.length > 1 && (
-            <p>
-              Multiple customer records match. Open Customers to choose the
-              correct account.
-            </p>
-          )}
+          {matches.length > 1 && <p>Multiple customer records match this conversation.</p>}
         </section>
         <div className="conversation-label">
           <span>ORIGINAL CONVERSATION</span>
@@ -941,6 +1107,7 @@ function LiveConversation({
                       >
                         Reply all
                       </button>
+                      {provider === 'microsoft' && <button className="text-button" onClick={() => edit({ forwardOf: m.id })}><Forward size={14}/> Forward</button>}
                     </>
                   )}
                   <button
@@ -950,6 +1117,7 @@ function LiveConversation({
                   >
                     {m.isRead ? "Mark unread" : "Mark read"}
                   </button>
+                  {provider === 'microsoft' && <button className="text-button" disabled={actionBusy} onClick={() => action(m, 'flag')}><Flag size={14}/>{m.flag?.flagStatus === 'flagged' ? 'Unflag' : 'Flag'}</button>}
                   {!m.isDraft && (
                     <>
                       <button
@@ -966,17 +1134,14 @@ function LiveConversation({
                       >
                         Move to Inbox
                       </button>
+                      {provider === 'microsoft' && <label className="mail-move-picker">Move to
+                        <select aria-label={`Move ${m.subject || 'message'} to folder`} disabled={actionBusy} value="" onChange={event => { const destinationId = event.target.value; if (destinationId) void action(m, 'move', false, destinationId); event.target.value = ''; }}>
+                          <option value="">Choose folder</option>
+                          {folders.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}
+                        </select>
+                      </label>}
+                      <button className="text-button" disabled={actionBusy} onClick={() => action(m, "move", false, "deleteditems")}><Trash2 size={14}/> Delete</button>
                     </>
-                  )}
-                  {outlookLink(m.webLink) && (
-                    <a
-                      className="text-button"
-                      href={outlookLink(m.webLink)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Open in Outlook <ExternalLink size={13} />
-                    </a>
                   )}
                 </div>
               </div>
@@ -986,18 +1151,22 @@ function LiveConversation({
           </article>
         ))}
         {editor && (
-          <DraftEditor
-            key={`${editor.replyTo}-${editor.replyAll}-${editor.existing?.id}`}
+          <div ref={editorNode} className="inline-mail-composer"><DraftEditor
+            key={`${editor.replyTo}-${editor.replyAll}-${editor.forwardOf}-${editor.existing?.id}-${editor.nonce || ''}`}
             {...editor}
             onDirty={(v) => {
               editorDirty.current = v;
               onDirty(v);
             }}
             onChanged={onChanged}
+            onSent={() => edit(undefined)}
             provider={provider}
+            mailbox={mailbox}
+            source={messages.find(message => message.id === (editor.replyTo || editor.forwardOf))}
+            onDiscard={() => { editorDirty.current = false; onDirty(false); setEditor(undefined); }}
             customers={customers}
             customerId={matches.length === 1 ? matches[0].id : undefined}
-          />
+          /></div>
         )}
       </div>
     </section>
@@ -1067,6 +1236,9 @@ function MessageContent({
     <>
       {record?.ccRecipients?.length ? (
         <p className="field-help">Cc: {addressList(record.ccRecipients)}</p>
+      ) : null}
+      {record?.bccRecipients?.length ? (
+        <p className="field-help">Bcc: {addressList(record.bccRecipients)}</p>
       ) : null}
       {error && (
         <p className="form-error" role="alert">
@@ -1143,55 +1315,84 @@ export function SafeMailBody({
         referrerPolicy="no-referrer"
         srcDoc={doc}
       />
-      <p className="field-help">
-        External images and links are blocked in this view. Embedded files can
-        be downloaded below. Use your mailbox provider for the full original
-        rendering.
-      </p>
+      <p className="field-help">External images and links are blocked here. Attachments can be downloaded below.</p>
     </>
   );
 }
 function DraftEditor({
   replyTo,
   replyAll,
+  forwardOf,
   existing,
+  source,
+  initialContent,
   onDirty,
   onChanged,
+  onSent,
+  onDiscard,
   provider,
+  mailbox,
   customers,
   customerId,
 }: {
   replyTo?: string;
   replyAll?: boolean;
+  forwardOf?: string;
   existing?: MicrosoftMessage;
+  source?: MicrosoftMessage;
+  initialContent?: string;
   onDirty: (v: boolean) => void;
   onChanged: () => void;
+  onSent?: () => void;
+  onDiscard?: () => void;
   provider: MailProviderName;
+  mailbox: string;
   customers: Client[];
   customerId?: string;
 }) {
-  const [to, setTo] = useState("");
-  const [subject, setSubject] = useState("");
-  const [content, setContent] = useState("");
+  const [to, setTo] = useState(() => {
+    if (!source || !replyTo) return '';
+    const addresses = [source.from?.emailAddress.address, ...(replyAll ? (source.toRecipients || []).map(item => item.emailAddress.address) : [])].filter((item): item is string => !!item && item.toLowerCase() !== mailbox.toLowerCase()).filter((item, index, all) => all.findIndex(other => other.toLowerCase() === item.toLowerCase()) === index);
+    return addresses.length ? `${addresses.join(', ')}, ` : '';
+  });
+  const [cc, setCc] = useState(() => {
+    const addresses = source && replyAll ? (source.ccRecipients || []).map(item => item.emailAddress.address).filter(item => item.toLowerCase() !== mailbox.toLowerCase()) : [];
+    return addresses.length ? `${addresses.join(', ')}, ` : '';
+  });
+  const [bcc, setBcc] = useState("");
+  const [subject, setSubject] = useState(source ? `${forwardOf ? 'Fwd' : 'Re'}: ${source.subject.replace(/^(?:Re|Fwd):\s*/i, '')}` : '');
+  const [content, setContent] = useState(initialContent ? textHtml(initialContent) : "");
+  const editorRef = useRef<HTMLDivElement>(null);
   const [saved, setSaved] = useState<{
     record: MicrosoftMessage;
     version: string;
   }>();
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(!!initialContent);
   const [busy, setBusy] = useState(!!existing);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [review, setReview] = useState<{
-    record: MicrosoftMessage;
-    approval: string;
-  }>();
+  const [showCc, setShowCc] = useState(!!(source && replyAll && source.ccRecipients?.length));
+  const [showBcc, setShowBcc] = useState(false);
+  const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>(() => customers.filter(customer => customer.email).map(customer => ({ name: customer.contact || customer.name, email: customer.email, company: customer.name, source: 'CRM customer' })));
   const [sent, setSent] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [quotationOptions, setQuotationOptions] = useState<CustomerQuotation[] | null>(null);
   const [quotationBusy, setQuotationBusy] = useState(false);
   const [quotationCustomerId, setQuotationCustomerId] = useState(customerId || '');
-  const [reviewAttachments, setReviewAttachments] = useState<MailAttachment[]>([]);
   const [ready, setReady] = useState(!existing);
+  useEffect(() => { if (initialContent) onDirty(true); }, []);
+  useEffect(() => { if (editorRef.current && initialContent) editorRef.current.innerText = initialContent; }, []);
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([crmRequest('action=recipient-suggestions'), mailRequest('recipient-suggestions')]).then(results => {
+      if (!active) return;
+      const all = [...suggestions, ...results.flatMap(result => result.status === 'fulfilled' ? result.value.records || [] : [])] as RecipientSuggestion[];
+      const unique = new Map<string, RecipientSuggestion>();
+      for (const item of all) if (item.email && !unique.has(item.email.toLowerCase())) unique.set(item.email.toLowerCase(), item);
+      setSuggestions([...unique.values()]);
+    });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (!existing) return;
     const controller = new AbortController();
@@ -1203,7 +1404,15 @@ function DraftEditor({
     )
       .then((data) => {
         setSaved(data);
-        setContent(data.record.body.content);
+        const html = DOMPurify.sanitize(data.record.body.contentType?.toLowerCase() === 'html' ? data.record.body.content : textHtml(data.record.body.content));
+        setContent(html);
+        if (editorRef.current) editorRef.current.innerHTML = html;
+        setTo(recipientValue(data.record.toRecipients));
+        setCc(recipientValue(data.record.ccRecipients));
+        setBcc(recipientValue(data.record.bccRecipients));
+        setSubject(data.record.subject);
+        setShowCc(!!data.record.ccRecipients?.length);
+        setShowBcc(!!data.record.bccRecipients?.length);
         setReady(true);
       })
       .catch((e) => {
@@ -1240,7 +1449,6 @@ function DraftEditor({
   const change = () => {
     setDirty(true);
     onDirty(true);
-    setReview(undefined);
     setNotice("");
   };
   async function loadQuotations() {
@@ -1261,14 +1469,22 @@ function DraftEditor({
     finally { setQuotationBusy(false); }
   }
   async function persistDraft() {
+    const outgoingContent = provider === 'microsoft' ? DOMPurify.sanitize(content) : editorRef.current?.innerText || '';
     const data = await mailRequest(
       "draft",
       {},
       saved
-        ? { draftId: saved.record.id, version: saved.version, content }
-        : { replyTo, replyAll, to, subject, content },
+        ? { draftId: saved.record.id, version: saved.version, to, cc, bcc, content: outgoingContent, ...(provider === 'microsoft' ? { format: 'html' } : {}) }
+        : { replyTo, replyAll, forwardOf, to, cc, bcc, subject, content: outgoingContent, overrideRecipients: true, ...(provider === 'microsoft' ? { format: 'html' } : {}) },
     );
     setSaved(data);
+    if (!saved) {
+      setTo(recipientValue(data.record.toRecipients));
+      setCc(recipientValue(data.record.ccRecipients));
+      setBcc(recipientValue(data.record.bccRecipients));
+      if (data.record.ccRecipients?.length) setShowCc(true);
+      if (data.record.bccRecipients?.length) setShowBcc(true);
+    }
     let current = data as { record: MicrosoftMessage; version: string };
     for (const file of files) {
       const attached = await mailRequest<{ version: string; hasAttachments: boolean }>('attach', {}, { id: current.record.id, name: file.name, contentType: file.type || 'application/octet-stream', contentBytes: await attachmentBase64(file) });
@@ -1284,12 +1500,11 @@ function DraftEditor({
   async function save() {
     setBusy(true);
     setError("");
-    setReview(undefined);
     try {
       await persistDraft();
       setNotice(
         provider === "hostinger"
-          ? "Draft secured for approval. It has not been sent."
+          ? "Draft saved. It has not been sent."
           : "Draft saved in Microsoft Outlook. It has not been sent.",
       );
     } catch (e) {
@@ -1298,61 +1513,50 @@ function DraftEditor({
       setBusy(false);
     }
   }
-  async function saveAndPrepare() {
+  async function sendNow() {
     setBusy(true);
     setError("");
     setNotice("");
     try {
       const current = !saved || dirty || files.length ? await persistDraft() : saved;
       const prepared = await mailRequest<{ record: MicrosoftMessage; approval: string }>("review", {}, { id: current.record.id });
-      setReviewAttachments(prepared.record.hasAttachments ? (await mailRequest<Page<MailAttachment>>('attachments', { id: current.record.id })).records : []);
-      setReview(prepared);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function send() {
-    setBusy(true);
-    setError("");
-    const approval = review!.approval;
-    setReview(undefined);
-    try {
-      const result = await mailRequest("send", {}, { approval });
+      const result = await mailRequest("send", {}, { approval: prepared.approval });
       setSent(true);
       setNotice(result.message);
       onChanged();
+      onSent?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
+  async function discard() {
+    setBusy(true);
+    setError('');
+    try {
+      const draftId = saved?.record.id || existing?.id;
+      if (draftId) await mailRequest('move', {}, { id: draftId, destinationId: 'deleteditems' });
+      onDirty(false);
+      if (draftId) onChanged();
+      onDiscard?.();
+    } catch (cause) { setError((cause as Error).message); }
+    finally { setBusy(false); }
+  }
+  function formatMessage(command: string, value?: string) {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    setContent(editorRef.current?.innerHTML || '');
+    change();
+  }
+  const hasMessage = !!(editorRef.current?.textContent?.trim() || content.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim());
   return (
     <section className="conversation-reply">
-      <div className="panel-heading">
-        <h3>
-          <Reply size={16} />
-          {existing
-            ? `Edit ${provider === "hostinger" ? "mailbox" : "Outlook"} draft`
-            : replyTo
-              ? replyAll
-                ? "Reply all"
-                : "Reply"
-              : "New message"}
-        </h3>
-        <span className="pill neutral">
-          {sent
-            ? "Send requested"
-            : dirty
-              ? "Unsaved changes"
-              : saved
-                ? provider === "hostinger"
-                  ? "Ready for approval"
-                  : "Saved in Outlook"
-                : "Not sent"}
-        </span>
+      <div className="mail-compose-top">
+        <button className="mail-compose-send" type="button" disabled={busy || !ready || !hasMessage || sent} onClick={() => void sendNow()}><Send size={15} /> Send</button>
+        <span className="mail-compose-from">From: <strong>{mailbox}</strong></span>
+        <span className="mail-compose-spacer" />
+        <button className="mail-compose-discard" type="button" aria-label="Discard draft" title="Discard draft" disabled={busy} onClick={() => void discard()}><Trash2 size={18} /></button>
       </div>
       {error && (
         <p className="notice amber" role="alert">
@@ -1364,64 +1568,36 @@ function DraftEditor({
           {notice}
         </p>
       )}
-      {!replyTo && !existing && !saved && (
-        <>
-          <label>
-            To
-            <input
-              aria-label="Recipient emails"
-              value={to}
-              disabled={busy}
-              onChange={(e) => {
-                setTo(e.target.value);
-                change();
-              }}
-              placeholder="customer@example.com"
-            />
-          </label>
-          <label>
-            Subject
-            <input
-              aria-label="Email subject"
-              value={subject}
-              disabled={busy}
-              onChange={(e) => {
-                setSubject(e.target.value);
-                change();
-              }}
-            />
-          </label>
-        </>
-      )}
-      {saved && (
-        <p className="field-help">
-          To: {addressList(saved.record.toRecipients)}
-          {saved.record.ccRecipients?.length
-            ? ` · Cc: ${addressList(saved.record.ccRecipients)}`
-            : ""}
-          <br />
-          {saved.record.subject}
-        </p>
-      )}
+      <div className="mail-addresses">
+        <RecipientField label="To" value={to} disabled={busy || !ready} suggestions={suggestions} onChange={value => { setTo(value); change(); }} placeholder="Type a name or email" actions={<span className="mail-recipient-actions">{!showCc && <button type="button" onClick={() => setShowCc(true)}>Cc</button>}{!showBcc && <button type="button" onClick={() => setShowBcc(true)}>Bcc</button>}</span>} />
+        {showCc && <RecipientField label="Cc" value={cc} disabled={busy || !ready} suggestions={suggestions} onChange={value => { setCc(value); change(); }} actions={<button type="button" className="mail-recipient-remove" aria-label="Remove Cc field and recipients" onClick={() => { setCc(''); setShowCc(false); change(); }}><X size={14}/> Remove</button>} />}
+        {showBcc && <RecipientField label="Bcc" value={bcc} disabled={busy || !ready} suggestions={suggestions} onChange={value => { setBcc(value); change(); }} actions={<button type="button" className="mail-recipient-remove" aria-label="Remove Bcc field and recipients" onClick={() => { setBcc(''); setShowBcc(false); change(); }}><X size={14}/> Remove</button>} />}
+      </div>
+      {!replyTo && !forwardOf && !existing && !saved && <label>
+        Subject<input aria-label="Email subject" value={subject} disabled={busy} onChange={e => { setSubject(e.target.value); change(); }} />
+      </label>}
+      {(replyTo || forwardOf || existing || saved) && <div className="mail-compose-subject">{saved?.record.subject || subject}</div>}
       {!sent && (
         <>
-          <textarea
-            aria-label="Email reply content"
-            rows={8}
-            value={content}
-            disabled={busy || !ready}
-            onChange={(e) => {
-              setContent(e.target.value);
-              change();
-            }}
-            placeholder="Write your message…"
-          />
-          {provider === 'microsoft' && <div className="mail-file-picker"><label><Paperclip size={15}/> Attach files<input type="file" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);event.target.value='';if(files.length+incoming.length>5||[...files,...incoming].reduce((size,file)=>size+file.size,0)>3*1024*1024){setError('Attach up to five files, with a combined size under 3 MB.');return;}setFiles(current=>[...current,...incoming]);if(incoming.length)change();}}/></label><select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotationOptions(null);}}><option value="">Choose customer for quotation</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select><button className="secondary compact" type="button" disabled={busy||quotationBusy||!quotationCustomerId} onClick={()=>void loadQuotations()}>{quotationBusy?'Loading…':'Attach saved quotation'}</button>{quotationOptions&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotationOptions.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotationOptions.length?'Choose a quotation PDF':'No saved quotations for this customer'}</option>{quotationOptions.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} · {quote.status}</option>)}</select>}{files.map((file,index)=><span key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>{setFiles(current=>current.filter((_,i)=>i!==index));change();}}><X size={13}/></button></span>)}</div>}
+          {provider === 'microsoft' && <div className="mail-format-toolbar" role="toolbar" aria-label="Format email">
+            <select aria-label="Font" defaultValue="Arial" disabled={busy} onChange={event => formatMessage('fontName', event.target.value)}><option>Arial</option><option>Calibri</option><option>Georgia</option><option>Times New Roman</option></select>
+            <select aria-label="Font size" defaultValue="3" disabled={busy} onChange={event => formatMessage('fontSize', event.target.value)}><option value="2">10</option><option value="3">12</option><option value="4">14</option><option value="5">18</option></select>
+            <button type="button" aria-label="Bold" title="Bold" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('bold')}><strong>B</strong></button>
+            <button type="button" aria-label="Italic" title="Italic" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('italic')}><em>I</em></button>
+            <button type="button" aria-label="Underline" title="Underline" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('underline')}><u>U</u></button>
+            <button type="button" aria-label="Bulleted list" title="Bulleted list" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('insertUnorderedList')}>• List</button>
+            <button type="button" aria-label="Numbered list" title="Numbered list" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('insertOrderedList')}>1. List</button>
+            <button type="button" aria-label="Add link" title="Add link" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => { const url = window.prompt('Link URL'); if (url && /^https?:\/\//i.test(url)) formatMessage('createLink', url); }}>Link</button>
+            <button type="button" aria-label="Undo" title="Undo" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('undo')}>↶</button>
+            <button type="button" aria-label="Redo" title="Redo" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('redo')}>↷</button>
+          </div>}
+          <div ref={editorRef} className="mail-rich-editor" role="textbox" aria-label="Email reply content" aria-multiline="true" contentEditable={!busy && ready} suppressContentEditableWarning data-placeholder="Write your message…" onInput={event => { setContent(event.currentTarget.innerHTML); change(); }} />
+          {provider === 'microsoft' && <div className="mail-file-picker"><label><Paperclip size={15}/> Attach files<input type="file" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);event.target.value='';if(files.length+incoming.length>5||[...files,...incoming].reduce((size,file)=>size+file.size,0)>3*1024*1024){setError('Attach up to five files, with a combined size under 3 MB.');return;}setFiles(current=>[...current,...incoming]);if(incoming.length)change();}}/></label><select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotationOptions(null);}}><option value="">Choose customer for quotation</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select><button className="secondary compact" type="button" disabled={busy||quotationBusy||!quotationCustomerId} onClick={()=>void loadQuotations()}>{quotationBusy?'Loading…':'Attach saved quotation'}</button>{quotationOptions&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotationOptions.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotationOptions.length?'Choose a quotation PDF':'No saved quotations for this customer'}</option>{quotationOptions.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} · {quote.status} · created {new Date(quote.created_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}</option>)}</select>}{files.map((file,index)=><span key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>{setFiles(current=>current.filter((_,i)=>i!==index));change();}}><X size={13}/></button></span>)}</div>}
           <div className="button-row">
             <button
               className="secondary"
               disabled={
-                busy || !ready || !content.trim() || (!!saved && !dirty && !files.length)
+                busy || !ready || !hasMessage || (!!saved && !dirty && !files.length)
               }
               onClick={save}
             >
@@ -1429,63 +1605,8 @@ function DraftEditor({
                 ? "Save draft"
                 : "Save to Outlook drafts"}
             </button>
-            <button
-              className="primary"
-              disabled={busy || !ready || !content.trim()}
-              onClick={saveAndPrepare}
-            >
-              <Send size={14} /> Review & send
-            </button>
           </div>
-          <p className="field-help">
-            Review & send saves this version and opens the final confirmation.
-            It will not send until you select Approve & send.
-          </p>
         </>
-      )}
-      {review && (
-        <section
-          className="mail-send-review"
-          aria-label="Review email before sending"
-        >
-          <h3>Confirm this message</h3>
-          <p>
-            <strong>To:</strong> {addressList(review.record.toRecipients)}
-          </p>
-          {!!review.record.ccRecipients?.length && (
-            <p>
-              <strong>Cc:</strong> {addressList(review.record.ccRecipients)}
-            </p>
-          )}
-          {!!review.record.bccRecipients?.length && (
-            <p>
-              <strong>Bcc:</strong> {addressList(review.record.bccRecipients)}
-            </p>
-          )}
-          <p>
-            <strong>Subject:</strong> {review.record.subject}
-          </p>
-          <p className="pre-line">{review.record.body?.content}</p>
-          {review.record.hasAttachments && (
-            <div className="mail-review-attachments"><strong>Attachments:</strong> {reviewAttachments.length ? reviewAttachments.map(item => item.name).join(', ') : 'Review attachments in your mailbox before sending.'}</div>
-          )}
-          <div className="button-row">
-            <button className="primary" disabled={busy} onClick={send}>
-              <Send size={14} /> Approve & send
-            </button>
-            <button
-              className="secondary"
-              disabled={busy}
-              onClick={() => setReview(undefined)}
-            >
-              Keep as draft
-            </button>
-          </div>
-          <p className="field-help">
-            This sends a real email from the connected mailbox. Review expires
-            after 10 minutes; any edit requires a new review.
-          </p>
-        </section>
       )}
     </section>
   );

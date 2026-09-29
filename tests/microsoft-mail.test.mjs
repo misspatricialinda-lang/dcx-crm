@@ -145,6 +145,77 @@ test("reply and reply-all create real conversation drafts and never invoke send"
     false,
   );
 });
+test("compose and edited drafts preserve To, Cc, and Bcc, while reply-all keeps its original recipients", async (t) => {
+  const calls = [];
+  const f = await fixture(t, async (path, options) => {
+    calls.push({ path, options });
+    return { id: 'draft', isDraft: path !== '/messages/original?$select=id,isDraft', changeKey: 'v1' };
+  });
+  const composed = await f.post('draft', { to: 'to@example.com', cc: 'cc@example.com, second@example.com', bcc: 'hidden@example.com', subject: 'Subject', content: 'Body' });
+  assert.equal(composed.status, 200);
+  assert.equal(calls[0].options.body.ccRecipients[0].emailAddress.address, 'cc@example.com');
+  assert.equal(calls[0].options.body.ccRecipients[1].emailAddress.address, 'second@example.com');
+  assert.equal(calls[0].options.body.bccRecipients[0].emailAddress.address, 'hidden@example.com');
+  const edited = await f.post('draft', { draftId: 'draft', version: 'W/"v1"', to: 'new@example.com', cc: '', bcc: 'hidden@example.com', content: 'Updated' });
+  assert.equal(edited.status, 200);
+  assert.equal(calls[2].options.body.toRecipients[0].emailAddress.address, 'new@example.com');
+  assert.deepEqual(calls[2].options.body.ccRecipients, []);
+  const invalid = await f.post('draft', { to: 'to@example.com', cc: 'bad-address', subject: 'Subject', content: 'Body' });
+  assert.equal(invalid.status, 400);
+  assert.equal(calls.length, 3);
+  const reply = await f.post('draft', { replyTo: 'original', replyAll: true, cc: '', bcc: '', content: 'Reply' });
+  assert.equal(reply.status, 200);
+  assert.equal('ccRecipients' in calls.at(-1).options.body.message, false);
+  const formattedReply = await f.post('draft', { replyTo: 'original', replyAll: true, to: 'customer@example.com', cc: '', bcc: '', overrideRecipients: true, format: 'html', content: '<p><strong>Reply</strong></p>' });
+  assert.equal(formattedReply.status, 200);
+  assert.equal(calls.at(-1).options.body.message.body.contentType, 'HTML');
+  assert.equal(calls.at(-1).options.body.message.toRecipients[0].emailAddress.address, 'customer@example.com');
+  assert.deepEqual(calls.at(-1).options.body.message.ccRecipients, []);
+});
+test("moving a message to a selected mailbox folder stays inside the mail API", async (t) => {
+  const calls = [];
+  const f = await fixture(t, async (path, options) => { calls.push({ path, options }); return { id: 'moved' }; });
+  const result = await f.post('move', { id: 'message', destinationId: 'deleteditems' });
+  assert.equal(result.status, 200);
+  assert.equal(calls[0].path, '/messages/message/move');
+  assert.equal(calls[0].options.body.destinationId, 'deleteditems');
+});
+test("flag and unflag write the Microsoft follow-up state", async (t) => {
+  const calls = [];
+  const f = await fixture(t, async (path, options) => { calls.push({ path, options }); return { id: 'message', flag: options.body?.flag }; });
+  assert.equal((await f.post('flag', { id: 'message', flagged: true })).status, 200);
+  assert.equal(calls[0].options.body.flag.flagStatus, 'flagged');
+  assert.equal((await f.post('flag', { id: 'message', flagged: false })).status, 200);
+  assert.equal(calls[1].options.body.flag.flagStatus, 'notFlagged');
+  assert.equal((await f.post('flag', { id: 'message', flagged: 'yes' })).status, 400);
+  assert.equal(calls.length, 2);
+});
+test("forward creates a draft with recipients and does not send it", async (t) => {
+  const calls = [];
+  const f = await fixture(t, async (path, options) => {
+    calls.push({ path, options });
+    return { id: 'forward-draft', isDraft: path.endsWith('/createForward'), changeKey: 'v1' };
+  });
+  const response = await f.post('draft', { forwardOf: 'original', to: 'recipient@example.com', cc: 'copy@example.com', content: 'Please see below.' });
+  assert.equal(response.status, 200);
+  assert.equal(calls[1].path, '/messages/original/createForward');
+  assert.equal(calls[1].options.body.message.toRecipients[0].emailAddress.address, 'recipient@example.com');
+  assert.equal(calls[1].options.body.message.ccRecipients[0].emailAddress.address, 'copy@example.com');
+  assert.equal(calls.some(call => call.path.endsWith('/send')), false);
+});
+test("recipient suggestions combine recent inbox and sent addresses without exposing message content", async (t) => {
+  const paths = [];
+  const f = await fixture(t, async path => {
+    paths.push(path);
+    return { value: [{ from: { emailAddress: { name: 'Alex', address: 'alex@example.com' } }, toRecipients: [{ emailAddress: { address: 'owner@example.com' } }], ccRecipients: [] }] };
+  });
+  const response = await f.get('recipient-suggestions');
+  assert.equal(response.status, 200);
+  const { records } = await response.json();
+  assert.deepEqual(records, [{ name: 'Alex', email: 'alex@example.com', source: 'Recent email' }]);
+  assert.equal(paths.length, 2);
+  assert.ok(paths.every(path => !path.includes('body')));
+});
 test("draft updates reject stale versions and use conditional Microsoft writes", async (t) => {
   const calls = [];
   const f = await fixture(t, async (path, options) => {

@@ -4,7 +4,7 @@ import { MailError, mailConfiguration, mailConfigured } from './microsoft-graph.
 import { delegatedGraphClient } from './microsoft-oauth.js';
 import { hostingerConfigured, hostingerConfiguration, hostingerMailHandler } from './hostinger-mail.js';
 
-const fields = 'id,internetMessageId,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,lastModifiedDateTime,isRead,isDraft,importance,hasAttachments,parentFolderId,webLink,changeKey';
+const fields = 'id,internetMessageId,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,lastModifiedDateTime,isRead,isDraft,importance,flag,hasAttachments,parentFolderId,webLink,changeKey';
 // Prevent parallel/repeated dispatch in one warm instance. Microsoft is still authoritative;
 // a durable dispatch ledger is required before supporting multiple send workers.
 const dispatches = new Map();
@@ -35,7 +35,8 @@ async function readBody(req, maxBytes = 100000) {
   try { return JSON.parse(raw || '{}'); } catch { throw new MailError(400, 'Invalid request.'); }
 }
 function content(value) { if (typeof value !== 'string' || !value.trim() || value.length > 50000) throw new MailError(400, 'Enter a message of up to 50,000 characters.'); return value; }
-function recipients(value) {
+function recipients(value, optional = false) {
+  if (optional && (value === undefined || value === null || (typeof value === 'string' && !value.trim()))) return [];
   if (typeof value !== 'string') throw new MailError(400, 'Enter recipient email addresses.');
   const list = value.split(/[;,]/).map(v => v.trim()).filter(Boolean);
   if (!list.length || list.length > 20 || list.some(v => v.length > 320 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v))) throw new MailError(400, 'Enter valid email addresses separated by commas (up to 20).');
@@ -66,6 +67,23 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         return respond(res, 200, await page(data.path));
       }
       if (action === 'folders') return respond(res, 200, await page(`${url.searchParams.has('parent') ? `/mailFolders/${segment(url.searchParams.get('parent'))}/childFolders` : '/mailFolders'}?$top=100&$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount`));
+      if (action === 'recipient-suggestions') {
+        const paths = ['inbox', 'sentitems'].map(folder => `/mailFolders/${folder}/messages?$top=100&$select=from,toRecipients,ccRecipients&$orderby=receivedDateTime desc`);
+        const results = await Promise.allSettled(paths.map(path => graph(path)));
+        if (results.every(result => result.status === 'rejected')) throw results[0].reason;
+        const records = [];
+        const seen = new Set();
+        for (const result of results) {
+          if (result.status !== 'fulfilled') continue;
+          for (const message of result.value.value || []) for (const recipient of [message.from, ...(message.toRecipients || []), ...(message.ccRecipients || [])]) {
+            const email = recipient?.emailAddress?.address?.trim().toLowerCase();
+            if (!email || seen.has(email) || email === mailbox.toLowerCase()) continue;
+            seen.add(email);
+            records.push({ name: recipient.emailAddress.name || email, email, source: 'Recent email' });
+          }
+        }
+        return respond(res, 200, { records });
+      }
       if (action === 'messages') {
         const params = new URLSearchParams({ '$top': '50', '$select': fields, '$orderby': 'receivedDateTime desc' });
         return respond(res, 200, await page(`/mailFolders/${segment(url.searchParams.get('folder') || 'inbox')}/messages?${params}`));
@@ -97,24 +115,40 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         if (typeof input.isRead !== 'boolean') throw new MailError(400, 'Read state is required.');
         await graph(`/messages/${segment(input.id)}`, { method: 'PATCH', body: { isRead: input.isRead } }); return respond(res, 200, { ok: true });
       }
+      if (action === 'flag') {
+        if (typeof input.flagged !== 'boolean') throw new MailError(400, 'Flag state is required.');
+        const record = await graph(`/messages/${segment(input.id)}`, { method: 'PATCH', body: { flag: { flagStatus: input.flagged ? 'flagged' : 'notFlagged' } } });
+        return respond(res, 200, { record });
+      }
       if (action === 'move') {
-        const record = await graph(`/messages/${segment(input.id)}/move`, { method: 'POST', body: { destinationId: input.restore ? 'inbox' : 'archive' } });
+        const destinationId = input.destinationId || (input.restore ? 'inbox' : 'archive');
+        segment(destinationId);
+        const record = await graph(`/messages/${segment(input.id)}/move`, { method: 'POST', body: { destinationId } });
         return respond(res, 200, { record });
       }
       if (action === 'draft') {
-        const body = { contentType: 'Text', content: content(input.content) }; let record;
+        const body = { contentType: input.format === 'html' ? 'HTML' : 'Text', content: content(input.content) }; let record;
+        const addressChanges = {};
+        if (input.to !== undefined) addressChanges.toRecipients = recipients(input.to, true);
+        if (input.cc !== undefined && (input.draftId || input.overrideRecipients || String(input.cc).trim())) addressChanges.ccRecipients = recipients(input.cc, true);
+        if (input.bcc !== undefined && (input.draftId || input.overrideRecipients || String(input.bcc).trim())) addressChanges.bccRecipients = recipients(input.bcc, true);
         if (input.draftId) {
           const path = `/messages/${segment(input.draftId)}`; const current = await graph(path + '?$select=id,isDraft,changeKey');
           if (!current.isDraft || input.version !== version(current)) throw new MailError(409, 'This draft changed or was sent. Reload it before editing.');
-          record = await graph(path, { method: 'PATCH', etag: version(current), body: { body } });
+          record = await graph(path, { method: 'PATCH', etag: version(current), body: { body, ...addressChanges } });
+        } else if (input.forwardOf) {
+          const path = `/messages/${segment(input.forwardOf)}`;
+          const original = await graph(path + '?$select=id,isDraft');
+          if (original.isDraft) throw new MailError(400, 'Open the draft to edit it instead.');
+          record = await graph(path + '/createForward', { method: 'POST', body: { message: { body, toRecipients: recipients(input.to), ...addressChanges } } });
         } else if (input.replyTo) {
           const path = `/messages/${segment(input.replyTo)}`;
           const original = await graph(path + '?$select=id,isDraft');
           if (original.isDraft) throw new MailError(400, 'Open the draft to edit it instead.');
-          record = await graph(path + (input.replyAll ? '/createReplyAll' : '/createReply'), { method: 'POST', body: { message: { body } } });
+          record = await graph(path + (input.replyAll ? '/createReplyAll' : '/createReply'), { method: 'POST', body: { message: { body, ...addressChanges } } });
         } else {
           if (typeof input.subject !== 'string' || !input.subject.trim() || input.subject.length > 998) throw new MailError(400, 'Enter a subject.');
-          record = await graph('/messages', { method: 'POST', body: { subject: input.subject, toRecipients: recipients(input.to), body } });
+          record = await graph('/messages', { method: 'POST', body: { subject: input.subject, toRecipients: recipients(input.to), ccRecipients: recipients(input.cc, true), bccRecipients: recipients(input.bcc, true), body } });
         }
         return respond(res, 200, { record, version: version(record) });
       }
