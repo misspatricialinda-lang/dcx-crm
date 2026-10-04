@@ -1,5 +1,7 @@
 # DCX Operations Workspace
 
+> **Start with [SYSTEM.md](SYSTEM.md)** for the current product map, code structure, data ownership, integrations, workflow status and verification boundaries. Some historical details below describe earlier versions of the UI.
+
 A private operations dashboard for DCX Technical Inc.'s UPS maintenance, battery and critical-power services. It brings customer records, mailbox conversations, follow-ups, job costing and customer proposals into one workspace.
 
 ## What the software does
@@ -85,3 +87,5 @@ npx playwright test
 **Remaining configuration:** `EMAIL_TRACKING_TOKEN` is not configured in the local environment, so scheduled intake / AI drafting is not verified or enabled. Import and configure the supplied n8n workflows and model credentials to activate that workflow. Live email dispatch was not exercised during verification. No changes were deployed by this update.
 
 Further setup: [Supabase](docs/supabase-setup-guide.md), [Microsoft mail](docs/microsoft-mail-setup.md), [email tracking and n8n](docs/email-tracking-setup.md).
+
+Email brain integration and client-requested dashboard controls: [implementation and rollout](docs/workspace-email-rollout.md).

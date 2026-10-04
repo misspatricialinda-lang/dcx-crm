@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { InboxAiDraft } from "./InboxAiDraft";
 import { TrackedInbox } from "./TrackedInbox";
 import DOMPurify from "dompurify";
 import {
@@ -116,8 +117,15 @@ export function ConnectedInbox({
   const connection = useMailConnection();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLElement>(null);
-  const [view, setView] = useState<'inbox' | 'ai' | 'drafts' | 'sent' | 'archive' | 'deleted'>('inbox');
-  useEffect(() => { if (focusId) setView('ai'); }, [focusId]);
+  const [aiFocus,setAiFocus]=useState(focusId);
+  const [providerFocus,setProviderFocus]=useState('');
+  useEffect(()=>{const open=(e:Event)=>{setAiFocus((e as CustomEvent<string>).detail);setView('ai');};window.addEventListener('dcx-open-ai',open);return()=>window.removeEventListener('dcx-open-ai',open);},[]);
+  const [view, setView] = useState<'inbox' | 'ai' | 'drafts' | 'sent' | 'archive' | 'deleted' | 'ai-deleted'>('inbox');
+  useEffect(() => {
+    if(!focusId)return;let current=true;
+    void fetch(`/api/email-assistant?action=location&id=${encodeURIComponent(focusId)}`,{cache:'no-store'}).then(async response=>{const result=await response.json();if(!response.ok)throw new Error(result.error);if(!current)return;if(result.ai_draft){setAiFocus(focusId);setView('ai');}else{setProviderFocus(result.conversation);setView('inbox');}}).catch(()=>{if(current)setView('ai');});
+    return()=>{current=false;};
+  }, [focusId]);
   useEffect(() => {
     const tabs = tabsRef.current;
     const workspace = workspaceRef.current;
@@ -145,8 +153,11 @@ export function ConnectedInbox({
         {connection.provider !== 'hostinger' && <><button className={view === 'archive' ? 'active' : ''} aria-current={view === 'archive' ? 'page' : undefined} onClick={() => changeView('archive')}><Archive size={16}/> Archive</button>
         <button className={view === 'deleted' ? 'active' : ''} aria-current={view === 'deleted' ? 'page' : undefined} onClick={() => changeView('deleted')}><Trash2 size={16}/> Deleted</button></>}
       </nav>
-      {view === 'ai' ? <TrackedInbox focusId={focusId} customers={customers} onQuote={onQuote} provider={connection.provider || 'microsoft'} onMailbox={() => changeView('inbox')} onSent={() => changeView('sent')} /> : connection.mode !== 'live' ? <MailConnectionCard /> : <MicrosoftInbox
+      {view==='deleted' && <button className="secondary" onClick={()=>changeView('ai-deleted')}>Deleted AI drafts - restore to AI Draft Replies</button>}
+      {view==='ai-deleted' && <button className="secondary" onClick={()=>changeView('deleted')}>Back to Deleted emails</button>}
+      {view === 'ai' || view === 'ai-deleted' ? <TrackedInbox key={view} initialTrash={view==='ai-deleted'} focusId={aiFocus || focusId} customers={customers} onQuote={onQuote} provider={connection.provider || 'microsoft'} onMailbox={() => changeView('inbox')} onSent={() => changeView('sent')} /> : connection.mode !== 'live' ? <MailConnectionCard /> : <MicrosoftInbox
         key={view}
+        focusConversation={providerFocus}
         customers={customers}
         onQuote={onQuote}
         mailbox={connection.mailbox!}
@@ -164,6 +175,7 @@ function MicrosoftInbox({
   mailbox,
   inboxId,
   initialFolder,
+  focusConversation,
   sentOnly,
   provider,
 }: {
@@ -172,6 +184,7 @@ function MicrosoftInbox({
   mailbox: string;
   inboxId: string;
   initialFolder: string;
+  focusConversation?: string;
   sentOnly: boolean;
   provider: MailProviderName;
 }) {
@@ -179,7 +192,8 @@ function MicrosoftInbox({
   const [folder, setFolder] = useState(initialFolder);
   const [messages, setMessages] = useState<MicrosoftMessage[]>([]);
   const [next, setNext] = useState<string | null>(null);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(focusConversation || '');
+  useEffect(()=>{if(focusConversation)setSelected(focusConversation);},[focusConversation]);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -300,7 +314,7 @@ function MicrosoftInbox({
         mailTimestamp(b.latest) - mailTimestamp(a.latest) ||
         a.id.localeCompare(b.id),
     );
-  const active = groups.find((t) => t.id === selected) || groups[0];
+  const active = groups.find((t) => t.id === selected) || (selected ? undefined : groups[0]);
   const rememberThread = useCallback(
     (id: string, records: MicrosoftMessage[]) => {
       const ordered = groupMicrosoftMessages(records).flatMap(
@@ -742,10 +756,10 @@ function MicrosoftInbox({
             </button>
           )}
         </section>
-        {active ? (
+        {(active || selected) ? (
           <LiveConversation
-            key={active.id}
-            id={active.id}
+            key={active?.id || selected}
+            id={active?.id || selected}
             revision={revision}
             customers={customers}
             onQuote={onQuote}
@@ -854,6 +868,7 @@ function LiveConversation({
     truncated: boolean;
     message_count: number;
     knowledge_sources: { id: string }[];
+    email_memory?: { status: string; matching_messages: number; sources: { source: string; id: string; occurred_at: string | null; subject: string }[] };
     reply_to_message_id: string | null;
   }>();
   const editorDirty = useRef(false);
@@ -988,12 +1003,14 @@ function LiveConversation({
         </p>
       </header>
       <div className="conversation-content">
+        <InboxAiDraft internetId={[...messages].reverse().find(m=>!m.isDraft && m.from?.emailAddress.address?.toLowerCase()!==mailbox.toLowerCase())?.internetMessageId} revision={revision}/>
         {error && (
           <p className="notice amber" role="alert">
             {error}
           </p>
         )}
         {loading && <p role="status">Refreshing conversation…</p>}
+        {false && (
         <section className="mail-intelligence">
           <div className="mail-ai-heading"><strong><Sparkles size={16} /> Conversation AI</strong><button type="button" onClick={() => void analyzeConversation()} disabled={loading || aiBusy || provider !== 'microsoft'}>{aiBusy ? 'Analyzing…' : aiResult ? 'Refresh analysis' : 'Analyze conversation'}</button></div>
           {!aiResult && !aiBusy && <p>Review this email chain and its supported attachments, then prepare a reply.</p>}
@@ -1009,6 +1026,8 @@ function LiveConversation({
             </div> : <p className="mail-ai-no-reply">No reply suggested for this conversation.</p>}
             {!!aiResult.analysis.uncertainties.length && <p className="mail-ai-caution"><strong>Check before replying:</strong> {aiResult.analysis.uncertainties.slice(0, 2).join(' · ')}</p>}
             {!!aiResult.attachments.length && <details className="mail-ai-files"><summary>{aiResult.attachments.filter(file => file.status === 'read').length} of {aiResult.attachments.length} attached files included in analysis</summary><ul>{aiResult.attachments.map((file, index) => <li key={index}>{file.name}: {file.status === 'read' ? 'included' : file.status === 'unsupported' ? 'unsupported file type' : file.status === 'unreadable' ? 'could not be read' : 'size or file limit reached'}</li>)}</ul></details>}
+            {aiResult.email_memory?.status === 'not_configured' && <p className="mail-ai-caution">Past email history is not connected yet. This analysis uses the current conversation and available guidance.</p>}
+            {aiResult.email_memory?.status === 'available' && <details className="mail-ai-files"><summary>{aiResult.email_memory.sources.length} history records included from {aiResult.email_memory.matching_messages} matching emails</summary><ul>{aiResult.email_memory.sources.map(record => <li key={`${record.source}:${record.id}`}>{record.occurred_at ? new Date(record.occurred_at).toLocaleDateString() : 'Date unknown'} — {record.subject || '(No subject)'}</li>)}</ul></details>}
             {aiResult.truncated && <p className="mail-ai-caution">Only the latest {aiResult.message_count} messages were analyzed.</p>}
           </div>}
           {matches.length === 1 && (
@@ -1024,6 +1043,7 @@ function LiveConversation({
           )}
           {matches.length > 1 && <p>Multiple customer records match this conversation.</p>}
         </section>
+        )}
         <div className="conversation-label">
           <span>ORIGINAL CONVERSATION</span>
           <button
@@ -1118,7 +1138,8 @@ function LiveConversation({
                     {m.isRead ? "Mark unread" : "Mark read"}
                   </button>
                   {provider === 'microsoft' && <button className="text-button" disabled={actionBusy} onClick={() => action(m, 'flag')}><Flag size={14}/>{m.flag?.flagStatus === 'flagged' ? 'Unflag' : 'Flag'}</button>}
-                  {!m.isDraft && (
+                  {(
+
                     <>
                       <button
                         className="text-button"

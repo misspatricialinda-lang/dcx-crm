@@ -46,6 +46,7 @@ import {
   FORMULA_VERSION,
   newDraft,
 } from "./lib/costing";
+import { lineFromRate } from "./lib/costing";
 import type { Workspace, SavedQuote, Client, PriceBook, QuoteDraft } from "./types/operations";
 
 const nav = [
@@ -117,10 +118,10 @@ function Dashboard({
   useEffect(() => {
     if (preview) return;
     let active = true;
-    crmRequest('action=rates').then(({ books, history }) => {
+    crmRequest('action=rates').then(({ books, history, retiredIds = [] }) => {
       if (!active) return;
       setRateVersions(Object.fromEntries(books.map((b: PriceBook) => [b.id, b.version])));
-      setData(d => ({ ...d, books: [...books, ...d.books.filter(b => !books.some((x: PriceBook) => x.id === b.id)).map(b => ({ ...b, status: 'Draft' as const }))], bookHistory: history }));
+      setData(d => ({ ...d, books: [...books, ...d.books.filter(b => !retiredIds.includes(b.id) && !books.some((x: PriceBook) => x.id === b.id)).map(b => ({ ...b, status: 'Draft' as const }))], bookHistory: history }));
       setRatesState('ready');
     }).catch(e => { if (active) { setRatesState('error'); setRatesError(e.message); } });
     return () => { active = false; };
@@ -142,6 +143,21 @@ function Dashboard({
     }));
     const saved = await saveRates({ ...book, items, taxPercent: sheet.taxPercent, updatedAt: new Date().toISOString() });
     update(d => ({ ...d, draft: d.draft?.bookId === saved.id ? { ...d.draft, bookVersion: saved.version } : d.draft }));
+  }
+  async function createPricing(name: string, sheet: QuoteDraft) {
+    const source=data.books.find(b=>b.id===sheet.bookId);if(!source)throw new Error('Select an agreement first.');
+    if(!calculateCost(sheet).valid)throw new Error('Correct the worksheet before creating an agreement.');
+    const saved=await saveRates({...source,id:`agreement-${crypto.randomUUID()}`,name:name.trim(),version:1,status:'Draft',taxPercent:sheet.taxPercent,items:sheet.lines.map(({rateItemId,quantity:_quantity,...line})=>({...line,id:rateItemId}))});
+    update(d=>({...d,draft:{...sheet,bookId:saved.id,bookVersion:saved.version}}));
+  }
+  async function deletePricing(id: string) {
+    if(data.books.length<2)throw new Error('Keep at least one pricing agreement.');
+    if(data.customers.some(c=>c.bookId===id))throw new Error('Change the agreement of customers using this pricing first.');
+    if(!preview) {
+      if(!rateVersions[id])throw new Error('Save this agreement before deleting it.');
+      await crmRequest('action=rates',{method:'DELETE',body:JSON.stringify({id,version:rateVersions[id]})});
+    }
+    update(d=>{const books=d.books.filter(b=>b.id!==id);return {...d,books,draft:d.draft?.bookId===id?{...d.draft,bookId:books[0].id,bookVersion:books[0].version,lines:books[0].items.map(r=>lineFromRate(r,0)),taxPercent:books[0].taxPercent??0}:d.draft};},'Pricing agreement deleted.');
   }
   const [tab, setTab] = useState(() =>
     nav.map((n) => n.id).includes(location.hash.slice(1))
@@ -471,6 +487,8 @@ function Dashboard({
                 onChange={(draft) => update((d) => ({ ...d, draft }))}
                 onSave={saveQuote}
                 onSavePricing={saveSheetPricing}
+                onCreatePricing={createPricing}
+                onDeletePricing={deletePricing}
                 pricingDisabled={!preview && ratesState !== 'ready'}
                 hasSavedPricing={preview || !!rateVersions[draft.bookId]}
               />

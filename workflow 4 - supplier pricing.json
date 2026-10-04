@@ -1,0 +1,432 @@
+{
+  "name": "Workflow 4 - Supplier price requests",
+  "nodes": [
+    {
+      "id": "0ae7d2b5-4931-4d4b-8125-42455b38817d",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3264778e-1eb2-4e2e-a69d-ba632e3f775f",
+      "name": "Configure Outlook Mailbox",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Set these to the addresses of the ONE Outlook account used by this workflow.\nconst mailbox_address='aliisthebestofthebest@outlook.com';\nconst own_addresses=['aliisthebestofthebest@outlook.com','outlook_f90cec84ccc04643@outlook.com'];\nreturn [{json:{mailbox_address,own_addresses}}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "d686089c-207a-4329-8841-4c4913ef6a2d",
+      "name": "Claim Supplier Request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.crm_claim_supplier_request() AS request;",
+        "options": {
+          "queryReplacement": ""
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "6391e530-5c2d-4e71-82a7-0293d55c4cf1",
+      "name": "Require Claimed Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const r=$json.request;if(!r?.claimed)return [];const config=$('Configure Outlook Mailbox').first().json;if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(r.supplier_email||'')||config.own_addresses.includes(r.supplier_email.toLowerCase()))throw new Error('Invalid supplier recipient');return [{json:r}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "a36b6888-e920-4d0e-a9fa-0ec460bba5d0",
+      "name": "Create Supplier Draft",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $json.request_subject }}",
+        "bodyContent": "={{ $json.request_body }}",
+        "additionalFields": {
+          "toRecipients": "={{ $json.supplier_email }}",
+          "bodyContentType": "Text",
+          "from": "={{ $('Configure Outlook Mailbox').first().json.mailbox_address }}"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "webhookId": "5dedb85f-33b6-4916-94cc-e72cb8c8b87b",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "57c85eb5-ff96-49ac-bcda-b91117969c72",
+      "name": "Record Supplier Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.supplier_price_requests SET provider_draft_id=$2,updated_at=now() WHERE id=$1::uuid AND status='dispatching' RETURNING id,provider_draft_id;",
+        "options": {
+          "queryReplacement": "={{ $('Require Claimed Request').first().json.id }}, {{ $('Create Supplier Draft').first().json.id }}"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "93dd5923-3c67-41e7-a010-3bfd030545f5",
+      "name": "Mark Supplier Uncertain",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1200,
+        260
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.supplier_price_requests SET status='uncertain',error='Dispatch interrupted. Check the saved draft and Sent before retrying.',updated_at=now() WHERE id=$1::uuid AND status='dispatching' RETURNING id,status;",
+        "options": {
+          "queryReplacement": "={{ $('Require Claimed Request').first().json.id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "cd2563ce-a670-449d-802c-6f7b5ec2ae8c",
+      "name": "Inspect Supplier Draft",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "resource": "draft",
+        "operation": "get",
+        "draftId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.provider_draft_id }}"
+        },
+        "output": "raw",
+        "options": {}
+      },
+      "onError": "continueErrorOutput",
+      "webhookId": "ce040eb7-37dc-45fb-8fde-fa141eb977bc",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "id": "68a659d9-08b4-486c-b208-0f99f25e2e91",
+      "name": "Verify Supplier Recipient",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const m=$json;const r=$('Require Claimed Request').first().json;const cfg=$('Configure Outlook Mailbox').first().json;const to=(m.toRecipients||[]).map(x=>x.emailAddress?.address?.toLowerCase());if(to.length!==1||to[0]!==r.supplier_email.toLowerCase()||(m.ccRecipients||[]).length||(m.bccRecipients||[]).length||!cfg.own_addresses.includes((m.from?.emailAddress?.address||'').toLowerCase())||m.subject!==r.request_subject||String(m.body?.content||'').trim()!==r.request_body.trim())throw new Error('Supplier draft verification failed');return [{json:{draft_id:m.id}}];",
+        "mode": "runOnceForAllItems"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "eb39c582-98c1-429c-b68a-3a1a8214f32a",
+      "name": "Send Supplier Draft",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "resource": "draft",
+        "operation": "send",
+        "draftId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.draft_id }}"
+        },
+        "to": ""
+      },
+      "onError": "continueErrorOutput",
+      "webhookId": "552629cb-36f6-4cee-acd7-f2d8324ce076",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "MiaNT3d34K2LD3Nb",
+          "name": "Microsoft Outlook account"
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "5b7eeb62-32b6-42f4-a6b6-667f1690fab8",
+      "name": "Record Supplier Send",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1800,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.supplier_price_requests SET status='sent',updated_at=now(),error=NULL WHERE id=$1::uuid AND status='dispatching' RETURNING id,status;",
+        "options": {
+          "queryReplacement": "={{ $('Require Claimed Request').first().json.id }}"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "ddSGCZFM8FCex3f8",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Configure Outlook Mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configure Outlook Mailbox": {
+      "main": [
+        [
+          {
+            "node": "Claim Supplier Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Supplier Request": {
+      "main": [
+        [
+          {
+            "node": "Require Claimed Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Require Claimed Request": {
+      "main": [
+        [
+          {
+            "node": "Create Supplier Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Supplier Draft": {
+      "main": [
+        [
+          {
+            "node": "Record Supplier Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Supplier Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Supplier Draft": {
+      "main": [
+        [
+          {
+            "node": "Inspect Supplier Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Supplier Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inspect Supplier Draft": {
+      "main": [
+        [
+          {
+            "node": "Verify Supplier Recipient",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Supplier Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Supplier Recipient": {
+      "main": [
+        [
+          {
+            "node": "Send Supplier Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Supplier Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Supplier Draft": {
+      "main": [
+        [
+          {
+            "node": "Record Supplier Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Supplier Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Supplier Send": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Mark Supplier Uncertain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "id": "JqEMxisIQXBA1E3G",
+  "nodeGroups": [
+    {
+      "id": "89433c91-5873-4e4b-88be-2a7fdd2feeb1",
+      "name": "Claim the next product price request",
+      "nodeNames": [
+        "Configure Outlook Mailbox",
+        "Claim Supplier Request",
+        "Require Claimed Request"
+      ],
+      "description": "Use the saved supplier mapping and claim one queued request, skipping safely when there is no work."
+    },
+    {
+      "id": "608c3acf-5a43-44f2-8e54-2875f1d54b27",
+      "name": "Verify and dispatch once",
+      "nodeNames": [
+        "Create Supplier Draft",
+        "Record Supplier Draft",
+        "Inspect Supplier Draft",
+        "Verify Supplier Recipient",
+        "Send Supplier Draft",
+        "Record Supplier Send",
+        "Mark Supplier Uncertain"
+      ],
+      "description": "Create a supplier draft, verify the exact recipient and body, send once and preserve uncertain outcomes."
+    }
+  ],
+  "activeVersionId": "313a67b8-ab82-47e5-82ae-712833731827",
+  "versionId": "313a67b8-ab82-47e5-82ae-712833731827"
+}

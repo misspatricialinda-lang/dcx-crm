@@ -4,6 +4,7 @@ export interface Recipient {
 export interface MicrosoftMessage {
   id: string;
   conversationId: string;
+  internetMessageId?: string;
   subject: string;
   bodyPreview: string;
   from?: Recipient;

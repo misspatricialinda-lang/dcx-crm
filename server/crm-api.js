@@ -4,6 +4,7 @@ import { configuration, getSession } from './auth-core.js';
 import { validatePriceBook } from './rates-model.js';
 import { entities, uuid, validateRecord } from './crm-model.js';
 import { validateProposal } from './proposal-model.js';
+import { emailBrainRequest } from './email-brain-api.js';
 
 const respond = (res, status, data) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); };
 const equal = (a, b) => timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
@@ -14,11 +15,12 @@ async function bodyOf(req, limit = 32768) {
   if (Buffer.byteLength(raw) > limit) throw new Error('Record is too large.');
   return JSON.parse(raw || '{}');
 }
-async function allRows(db, entity, customerId) {
+async function allRows(db, entity, customerId, trash = false) {
   const rows = [];
   for (let offset = 0; ; offset += 500) {
     let query = db.from(`crm_${entity}`).select('*').order('id').range(offset, offset + 499);
     if (customerId) query = query.eq('customer_id', customerId);
+    if (entity === 'customers') query = trash ? query.not('deleted_at','is',null) : query.is('deleted_at',null);
     const { data, error } = await query;
     if (error) throw error;
     rows.push(...data);
@@ -34,7 +36,7 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
   const automation = action === 'lookup' && req.method === 'GET' && (env.AUTOMATION_API_TOKEN || '').length >= 32 && equal(token, env.AUTOMATION_API_TOKEN);
   if (!automation && !getSession(req, configuration(env))) return respond(res, 401, { error: 'Please sign in to access customer records.' });
   if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return respond(res, 405, { error: 'Method not allowed.' });
-  if (req.method === 'DELETE' && action !== 'quotations') return respond(res, 405, { error: 'Method not allowed.' });
+  if (req.method === 'DELETE' && action !== 'quotations' && action !== 'rates' && url.searchParams.get('entity') !== 'customers') return respond(res, 405, { error: 'Method not allowed.' });
   if (req.method !== 'GET') {
     const origin = `${process.env.NODE_ENV === 'production' ? 'https' : 'http'}://${req.headers.host}`;
     if (req.headers.origin !== origin || req.headers['sec-fetch-site'] === 'cross-site') return respond(res, 403, { error: 'Request origin is not allowed.' });
@@ -42,16 +44,27 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
   if (!injectedDb && (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY)) return respond(res, 503, { error: 'Supabase is not configured. Follow docs/supabase-setup-guide.md.', code: 'NOT_CONFIGURED' });
   try {
     const db = injectedDb || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    if(action==='email-brain') {
+      try { return respond(res,200,await emailBrainRequest(db,req,url,req.method==='GET'?null:await bodyOf(req))); }
+      catch(error){return respond(res,['42P01','42703','PGRST202','PGRST205'].includes(error.code)?503:400,{error:['42P01','42703','PGRST202','PGRST205'].includes(error.code)?'Apply the October 4 email memory and workspace migrations to connect these controls.':error.message});}
+    }
     if(action==='quotations') {
       const checked=async q=>{const {data,error}=await q;if(error){const e=new Error(error.message);e.code=error.code;throw e;}return data;};
       const customerId=url.searchParams.get('customer_id');
       if(!uuid(customerId))return respond(res,400,{error:'Select a customer.'});
       if(req.method==='GET') {
-        const records=await checked(db.from('crm_quotations').select('*,items:crm_quotation_items(*)').eq('customer_id',customerId).is('deleted_at',null).order('created_at',{ascending:false}).limit(200));
+        let query=db.from('crm_quotations').select('*,items:crm_quotation_items(*)').eq('customer_id',customerId);
+        query=url.searchParams.get('trash')==='true'?query.not('deleted_at','is',null):query.is('deleted_at',null);
+        const records=await checked(query.order('created_at',{ascending:false}).limit(200));
         return respond(res,200,{records:records.map(q=>({...q,items:(q.items||[]).sort((a,b)=>a.position-b.position)}))});
       }
       let input;
       try{input=await bodyOf(req,1024*1024);}catch(e){return respond(res,400,{error:e.message});}
+      if (['restore','purge'].includes(input.action)) {
+        if (!uuid(input.id)||!Number.isSafeInteger(input.version)||input.version<1||req.method!=='POST') return respond(res,400,{error:'Reload the trashed quotation before changing it.'});
+        await checked(db.rpc('crm_quotation_trash',{p_customer_id:customerId,p_id:input.id,p_version:input.version,p_action:input.action}));
+        return respond(res,200,{success:true});
+      }
       if(req.method==='DELETE') {
         if(!uuid(input.id)||!Number.isSafeInteger(input.version)||input.version<1)return respond(res,400,{error:'Reload the quotation before deleting.'});
         const deleted=await checked(db.rpc('crm_delete_quotation',{p_customer_id:customerId,p_quotation_id:input.id,p_version:input.version}));
@@ -59,6 +72,8 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
       }
       const validQuantity=value=>/^\d{1,9}(\.\d{1,3})?$/.test(String(value));
       const validPrice=value=>/^\d{1,10}(\.\d{1,2})?$/.test(String(value));
+      const taxRate=input.tax_rate===undefined?13:input.tax_rate;
+      if(typeof taxRate!=='number'||!Number.isFinite(taxRate)||taxRate<0||taxRate>100||Math.abs(taxRate*100-Math.round(taxRate*100))>1e-8) return respond(res,400,{error:'Tax percent must be 0–100 with up to two decimals.'});
       if(!Array.isArray(input.items)||input.items.length<1||input.items.length>500||
         input.items.some(i=>!i||typeof i.product_service!=='string'||!i.product_service.trim()||i.product_service.length>200||
           typeof i.description!=='string'||i.description.length>2000||!validQuantity(i.quantity)||Number(i.quantity)<=0||!validPrice(i.unit_price))||
@@ -66,7 +81,7 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
         (req.method==='PATCH'&&(!uuid(input.id)||!Number.isSafeInteger(input.version)||input.version<1)))
         return respond(res,400,{error:'Enter a valid address and at least one complete quotation row.'});
       if(req.method==='POST'&&input.id)return respond(res,400,{error:'New quotations cannot specify an ID.'});
-      const quoteId=await checked(db.rpc('crm_save_quotation',{p_customer_id:customerId,p_quotation_id:req.method==='PATCH'?input.id:null,p_version:req.method==='PATCH'?input.version:null,p_address_1:input.address_1,p_items:input.items.map(i=>({product_service:i.product_service,description:i.description,quantity:String(i.quantity),unit_price:String(i.unit_price)})),p_issue:input.issue===true}));
+      const quoteId=await checked(db.rpc('crm_save_quotation',{p_customer_id:customerId,p_quotation_id:req.method==='PATCH'?input.id:null,p_version:req.method==='PATCH'?input.version:null,p_address_1:input.address_1,p_items:input.items.map(i=>({product_service:i.product_service,description:i.description,quantity:String(i.quantity),unit_price:String(i.unit_price)})),p_issue:input.issue===true,p_tax_rate:taxRate}));
       const record=await checked(db.from('crm_quotations').select('*,items:crm_quotation_items(*)').eq('id',quoteId).single());
       record.items.sort((a,b)=>a.position-b.position);
       return respond(res,req.method==='POST'?201:200,{record});
@@ -102,20 +117,28 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
           rows.push(...data);
           if (data.length < 500) break;
         }
+        const retiredIds=[...new Set(rows.filter(row=>row.retired_at).map(row=>row.book_id))];
         const seen = new Set(); const books = [], history = [];
         for (const row of rows) {
+          if(retiredIds.includes(row.book_id))continue;
           const book = { ...row.snapshot, id: row.book_id, version: row.version, updatedAt: row.created_at };
           (seen.has(row.book_id) ? history : books).push(book); seen.add(row.book_id);
         }
-        return respond(res, 200, { books, history });
+        return respond(res, 200, { books, history, retiredIds });
+      }
+      if(req.method==='DELETE') {
+        const input=await bodyOf(req);
+        if(typeof input.id!=='string'||!Number.isSafeInteger(input.version))return respond(res,400,{error:'Reload the pricing agreement first.'});
+        const {data,error}=await db.rpc('crm_retire_price_book',{p_id:input.id,p_version:input.version});if(error)return respond(res,409,{error:error.message});return respond(res,200,{success:data});
       }
       let input, book;
       try {
         input = await bodyOf(req); book = validatePriceBook(input.book);
         if (input.expectedVersion !== null && (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1)) throw new Error('Refresh rates before saving.');
       } catch (error) { return respond(res, 400, { error: error.message }); }
-      const { data: latest, error: readError } = await db.from('calculator_rate_versions').select('version').eq('book_id', book.id).order('version', { ascending: false }).limit(1).maybeSingle();
+      const { data: latest, error: readError } = await db.from('calculator_rate_versions').select('version,retired_at').eq('book_id', book.id).order('version', { ascending: false }).limit(1).maybeSingle();
       if (readError) throw readError;
+      if(latest?.retired_at)return respond(res,409,{error:'This pricing agreement was deleted. Create a new agreement.'});
       if ((latest?.version ?? null) !== input.expectedVersion) return respond(res, 409, { error: 'Rates changed elsewhere. Reload the page before saving; your edits have not been overwritten.' });
       const version = latest ? latest.version + 1 : (Number.isSafeInteger(input.book.version) && input.book.version > 0 && input.book.version < 2147483647 ? input.book.version : 1);
       const { data: saved, error } = await db.from('calculator_rate_versions').insert({ book_id: book.id, version, snapshot: book, saved_by: getSession(req, configuration(env)).email }).select().single();
@@ -128,13 +151,14 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
       if (!email || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return respond(res, 400, { error: 'A valid email is required.' });
       const { data: contacts, error } = await db.from('crm_contacts').select('*').eq('email', email);
       if (error) throw error;
-      const { data: primary, error: primaryError } = await db.from('crm_customers').select('id').eq('email', email);
+      const { data: primary, error: primaryError } = await db.from('crm_customers').select('id').eq('email', email).is('deleted_at',null);
       if (primaryError) throw primaryError;
       const ids = [...new Set([...contacts.map(c => c.customer_id), ...primary.map(c => c.id)])];
       if (!ids.length) return respond(res, 200, { status: 'not_found', customer: null, message: 'No exact contact match. Ask for details or review a new contact.' });
       if (ids.length !== 1) return respond(res, 200, { status: 'needs_review', customer: null, message: 'Multiple customer matches. Do not select automatically.' });
-      const { data: customer, error: customerError } = await db.from('crm_customers').select('*').eq('id', ids[0]).single();
+      const { data: customer, error: customerError } = await db.from('crm_customers').select('*').eq('id', ids[0]).is('deleted_at',null).maybeSingle();
       if (customerError) throw customerError;
+      if(!customer)return respond(res,200,{status:'not_found',customer:null});
       const history = Object.fromEntries(await Promise.all(Object.keys(entities).filter(e => e !== 'customers').map(async e => [e, await allRows(db, e, customer.id)])));
       return respond(res, 200, { status: 'matched', customer, ...history, message: 'Exact contact match only. Confirm which site/equipment the request concerns; historical ownership is not guaranteed.' });
     }
@@ -145,7 +169,7 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
       ]);
       const records = [
         ...customers.filter(row => row.email).map(row => ({ name: row.contact || row.name, email: row.email, company: row.name, source: 'CRM customer' })),
-        ...contacts.filter(row => row.email).map(row => ({ name: row.name, email: row.email, company: customers.find(customer => customer.id === row.customer_id)?.name || '', source: 'CRM contact' })),
+        ...contacts.filter(row => row.email && customers.some(customer=>customer.id===row.customer_id)).map(row => ({ name: row.name, email: row.email, company: customers.find(customer => customer.id === row.customer_id)?.name || '', source: 'CRM contact' })),
       ];
       return respond(res, 200, { records });
     }
@@ -154,7 +178,14 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
     if (req.method === 'GET') {
       const customerId = url.searchParams.get('customer_id');
       if (entity !== 'customers' && !uuid(customerId)) return respond(res, 400, { error: 'Select a customer.' });
-      return respond(res, 200, { records: await allRows(db, entity, entity === 'customers' ? undefined : customerId) });
+      return respond(res, 200, { records: await allRows(db, entity, entity === 'customers' ? undefined : customerId, url.searchParams.get('trash')==='true') });
+    }
+    if(entity==='customers' && (req.method==='DELETE' || action==='restore-customer')) {
+      const input=await bodyOf(req);
+      if(!uuid(input.id)||!Number.isFinite(Date.parse(input.updated_at)))return respond(res,400,{error:'Reload the customer before changing it.'});
+      const {data,error}=await db.rpc('crm_customer_trash',{p_id:input.id,p_updated_at:input.updated_at,p_restore:action==='restore-customer'});
+      if(error)throw error;
+      return data?respond(res,200,{success:true}):respond(res,409,{error:'Customer changed. Reload it.'});
     }
     let input, record;
     try { input = await bodyOf(req); record = validateRecord(entity, input); }

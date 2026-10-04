@@ -32,7 +32,13 @@ test('conversation AI reads the chain and supported attachments, retrieves knowl
     if (path.includes('/$value')) return { arrayBuffer: async () => Buffer.from('%PDF-test') };
     throw new Error(`Unexpected Graph path ${path}`);
   };
-  const db = { rpc(name, params) { assert.equal(name, 'match_documents'); assert.equal(params.query_embedding.length, 1536); return Promise.resolve({ data: [{ content: 'DCX provides UPS maintenance.', similarity: .8 }], error: null }); } };
+  const db = { rpc(name, params) {
+    if (name === 'crm_email_memory') {
+      assert.deepEqual(params.p_addresses, ['customer@example.com']);
+      return Promise.resolve({ data: { matching_messages: 1, messages: [{ source: 'pst', id: 'historical-1', occurred_at: '2026-03-01T10:00:00Z', subject: 'Old request', body_text: 'Six months ago we asked for battery service.' }] }, error: null });
+    }
+    assert.equal(name, 'match_documents'); assert.equal(params.query_embedding.length, 1536); return Promise.resolve({ data: [{ content: 'DCX provides UPS maintenance.', similarity: .8 }], error: null });
+  } };
   const transport = async (url, init) => {
     const request = JSON.parse(init.body);
     if (url.endsWith('/embeddings')) return { ok: true, json: async () => ({ data: [{ embedding: Array(1536).fill(.1) }] }) };
@@ -41,6 +47,7 @@ test('conversation AI reads the chain and supported attachments, retrieves knowl
     assert.match(request.instructions, /Supabase knowledge passages/);
     assert.match(request.input[0].content[0].text, /DCX provides UPS maintenance/);
     assert.match(request.input[0].content[0].text, /Please review the attached requirements/);
+    assert.match(request.input[0].content[0].text, /Six months ago we asked for battery service/);
     assert.equal(request.input[0].content[1].type, 'input_file');
     return { ok: true, json: async () => ({ output: [{ content: [{ type: 'output_text', text: JSON.stringify({ summary: 'Customer requested a quote.', customer_request: 'Review scope and quote.', next_steps: ['Check scope'], reply_needed: true, draft_reply: 'Thanks, we will review the scope.', uncertainties: ['Pricing needed'] }) }] }] }) };
   };
@@ -50,6 +57,7 @@ test('conversation AI reads the chain and supported attachments, retrieves knowl
   const result = await response.json();
   assert.equal(result.reply_to_message_id, 'incoming');
   assert.equal(result.analysis.draft_reply, 'Thanks, we will review the scope.');
+  assert.equal(result.email_memory.matching_messages, 1);
   assert.deepEqual(result.attachments.map(item => item.status), ['read', 'unsupported']);
   assert.ok(calls.every(call => !call.options.method || call.options.method === 'GET'));
 });

@@ -22,6 +22,7 @@ export function trackingDb(pg) {
       });
       const query={
         select(f='*'){fields=f;return query;},
+        is(k,v){if(v!==null)throw new Error('Only null IS supported');conditions.push(`${k} is null`);return query;},
         eq(k,v){conditions.push(`${k}=${bind(v)}`);return query;},
         neq(k,v){conditions.push(`${k}<>${bind(v)}`);return query;},
         gt(k,v){conditions.push(`${k}>${bind(v)}`);return query;},

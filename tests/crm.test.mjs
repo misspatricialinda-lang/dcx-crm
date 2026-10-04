@@ -13,7 +13,7 @@ test('CRM validates required fields, money, dates, IDs, and normalizes email', (
   assert.throws(() => validateRecord('purchases', { customer_id: id, name: 'Battery', source: 'Invoice', occurred_on: '2026-02-30' }));
   assert.throws(() => validateRecord('purchases', { customer_id: id, name: 'Battery', source: 'Invoice', occurred_on: '2026-02-20', amount: -1 }));
   assert.throws(() => validateRecord('contacts', { customer_id: 'bad', name: 'Sam', email: 'sam@example.com' }));
-  assert.deepEqual(validateRecord('customers', { name: ' ABC ', malicious: 'ignored' }), { name: 'ABC', phone: '', notes: '', contact: '', email: '', billing_address: '', price_book: 'standard' });
+  assert.deepEqual(validateRecord('customers', { name: ' ABC ', malicious: 'ignored' }), { name: 'ABC', phone: '', notes: '', contact: '', email: '', billing_address: '', price_book: 'standard', relationship_type:'customer' });
 });
 async function serverFor(t, db) {
   const server = createServer((req, res) => crmHandler(req, res, env, db));
@@ -33,7 +33,7 @@ function fakeDb(tables, mutationResult = null) {
   return { from(table) {
     let rows = tables[table] || [], mutation = false;
     const query = {
-      select() { return query; }, order() { return query; },
+      select() { return query; }, is(key,value){rows=rows.filter(row=>(row[key]??null)===value);return query;}, order() { return query; },
       eq(key, value) { rows = rows.filter(row => row[key] === value); return query; },
       range(start, end) { rows = rows.slice(start, end + 1); return query; },
       insert() { mutation = true; return query; }, update() { mutation = true; return query; },

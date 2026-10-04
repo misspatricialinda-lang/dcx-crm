@@ -80,7 +80,7 @@ export async function buildCustomerQuotationPdf(q: CustomerQuotation, logo: stri
   if (y + 112 > 738) { doc.addPage(); header(false); y = 140; }
   y += 12; doc.setDrawColor(140); doc.line(32, y, 580, y); y += 18;
   const totalRow = (label: string, amount: number, bold = false) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(0); doc.text(label, 480, y, { align: 'right' }); doc.rect(490, y - 12, 90, 20); doc.text(cad(amount), 575, y, { align: 'right' }); y += 20; };
-  totalRow('Subtotal', Number(q.subtotal)); totalRow(`HST ON (${q.tax_rate}%)`, Number(q.tax_total)); totalRow('Total', Number(q.grand_total), true);
+  totalRow('Subtotal', Number(q.subtotal)); totalRow(`Tax (${q.tax_rate}%)`, Number(q.tax_total)); totalRow('Total', Number(q.grand_total), true);
   y += 12; text('This quote is valid for the next 30 days, after which values may be subject to change.', 32, y, 9);
   text('Unless otherwise stated, Freight is NOT included.', 32, y + 20, 9);
   if (q.status === 'draft') { doc.setTextColor(160, 40, 40); doc.setFontSize(9); doc.text('DRAFT - NOT ISSUED', 580, 765, { align: 'right' }); }

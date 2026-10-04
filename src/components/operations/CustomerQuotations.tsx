@@ -11,6 +11,8 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
   const [items, setItems] = useState<QuotationItem[]>([blankRow()]);
   const [address, setAddress] = useState(customer.billing_address || '');
   const [search, setSearch] = useState('');
+  const [taxRate,setTaxRate]=useState(13);
+  const [trash,setTrash]=useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -21,7 +23,7 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
   const [previewError, setPreviewError] = useState('');
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const previewObjectUrl = useRef('');
-  const sum = useMemo(() => totals(items), [items]);
+  const sum = useMemo(() => totals(items,taxRate), [items,taxRate]);
   useEffect(() => () => { if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current); }, []);
   useEffect(() => {
     if (!editing) { setPreviewUrl(''); setPreviewPages(0); return; }
@@ -35,7 +37,7 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
           estimate_number: existing?.estimate_number || 0,
           recipient_snapshot: existing?.recipient_snapshot || { name: customer.name || '', contact: customer.contact || '', email: customer.email || '', billing_address: customer.billing_address || '' },
           address_1: address, status: 'draft', version: existing?.version || 1,
-          tax_rate: 13, subtotal: sum.subtotal, tax_total: sum.tax, grand_total: sum.total,
+          tax_rate: taxRate, subtotal: sum.subtotal, tax_total: sum.tax, grand_total: sum.total,
           created_at: existing?.created_at || new Date().toISOString(),
           items: items.map(row => ({ ...row, line_total: lineCents(row) / 100 })),
         };
@@ -49,22 +51,22 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
       finally { if (!cancelled) setPreviewBusy(false); }
     }, 600);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [editing, items, address, customer.id, customer.name, customer.contact, customer.email, customer.billing_address, sum.subtotal, sum.tax, sum.total]);
+  }, [taxRate, editing, items, address, customer.id, customer.name, customer.contact, customer.email, customer.billing_address, sum.subtotal, sum.tax, sum.total]);
   const load = async () => {
     if (preview) { setLoading(false); return; }
     setLoading(true);
-    try { setRecords((await crmRequest(`action=quotations&customer_id=${encodeURIComponent(customer.id)}`)).records); setError(''); }
+    try { setRecords((await crmRequest(`action=quotations&customer_id=${encodeURIComponent(customer.id)}&trash=${trash}`)).records); setError(''); }
     catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   };
-  useEffect(() => { void load(); }, [customer.id, preview]);
-  const newQuote = () => { setEditing('new'); setItems([blankRow()]); setAddress(customer.billing_address || ''); setDirty(false); setError(''); };
+  useEffect(() => { void load(); }, [customer.id, preview, trash]);
+  const newQuote = () => { setTrash(false); setTaxRate(13); setEditing('new'); setItems([blankRow()]); setAddress(customer.billing_address || ''); setDirty(false); setError(''); };
   useEffect(() => { if (createNow) { newQuote(); onCreated(); } }, [createNow]);
   useEffect(() => {
     const unload = (event: BeforeUnloadEvent) => { if (dirty && editing) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', unload); return () => window.removeEventListener('beforeunload', unload);
   }, [dirty, editing]);
-  const edit = (q: CustomerQuotation) => { setEditing(q); setItems(q.items.map(i => ({ ...i }))); setAddress(q.address_1); setDirty(false); setError(''); };
+  const edit = (q: CustomerQuotation) => { setTaxRate(Number(q.tax_rate)); setEditing(q); setItems(q.items.map(i => ({ ...i }))); setAddress(q.address_1); setDirty(false); setError(''); };
   const setRow = (index: number, patch: Partial<QuotationItem>) => { setItems(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row)); setDirty(true); };
   async function save(issue: boolean) {
     if (!editing || busy || preview) return;
@@ -74,7 +76,7 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
       const existing = editing === 'new' ? null : editing;
       const { record } = await crmRequest(`action=quotations&customer_id=${encodeURIComponent(customer.id)}`, {
         method: existing ? 'PATCH' : 'POST',
-        body: JSON.stringify({ id: existing?.id, version: existing?.version, address_1: address, issue, items: items.map(({ product_service, description, quantity, unit_price }) => ({ product_service, description, quantity, unit_price })) }),
+        body: JSON.stringify({ id: existing?.id, version: existing?.version, address_1: address, tax_rate: taxRate, issue, items: items.map(({ product_service, description, quantity, unit_price }) => ({ product_service, description, quantity, unit_price })) }),
       });
       setRecords(rows => [record, ...rows.filter(q => q.id !== record.id)]);
       setEditing(null); setDirty(false);
@@ -82,11 +84,17 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
     finally { setBusy(false); }
   }
   async function remove(q: CustomerQuotation) {
-    if (busy || !window.confirm(`Delete estimate #${q.estimate_number}? It will be hidden from this customer, and its number will never be reused.`)) return;
+    if (busy || !window.confirm(`Move estimate #${q.estimate_number} to trash? You can restore it later.`)) return;
     setBusy(true); setError('');
     try { await crmRequest(`action=quotations&customer_id=${encodeURIComponent(customer.id)}`, { method: 'DELETE', body: JSON.stringify({ id: q.id, version: q.version }) }); setRecords(rows => rows.filter(r => r.id !== q.id)); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
+  }
+  async function trashAction(q: CustomerQuotation, action: 'restore'|'purge') {
+    if(busy || (action==='purge' && !window.confirm(`Permanently delete estimate #${q.estimate_number}? This cannot be undone.`))) return;
+    setBusy(true);setError('');
+    try { await crmRequest(`action=quotations&customer_id=${encodeURIComponent(customer.id)}`,{method:'POST',body:JSON.stringify({id:q.id,version:q.version,action})}); await load(); }
+    catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
   async function download(q: CustomerQuotation) {
     setError('');
@@ -98,15 +106,16 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
     <div className="panel-heading"><div><h2>Quotations</h2><p className="small muted">Itemized DCX estimates saved with this customer</p></div><button className="primary" onClick={newQuote}><Plus size={15}/> New quotation</button></div>
     {preview && <p className="notice amber">Sign in to save quotations and receive estimate numbers.</p>}
     {error && !editing && <p className="form-error" role="alert">{error}</p>}
+    <div className="button-row"><button className="secondary" onClick={()=>setTrash(false)} disabled={!trash}>Active quotations</button><button className="secondary" onClick={()=>setTrash(true)} disabled={trash}>Trash</button></div>
     <div className="search-field"><input aria-label="Search this customer's quotations" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search estimate number or item"/></div>
-    {loading ? <p>Loading quotations…</p> : !visible.length ? <p className="muted">No matching quotations for this customer.</p> : <div className="table-scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>{visible.map(q => <tr key={q.id}><td>#{q.estimate_number}</td><td>{new Date(q.issued_at || q.created_at).toLocaleDateString('en-CA')}</td><td>{q.status}</td><td>{cad(Number(q.grand_total))}</td><td><div className="button-row">{q.status === 'draft' && <button className="secondary compact" onClick={() => edit(q)}>Edit</button>}<button className="secondary compact" onClick={() => void download(q)}><Download size={14}/> PDF</button><button className="secondary compact" disabled={busy} onClick={() => void remove(q)}><Trash2 size={14}/> Delete</button></div></td></tr>)}</tbody></table></div>}
+    {loading ? <p>Loading quotations…</p> : !visible.length ? <p className="muted">No matching quotations for this customer.</p> : <div className="table-scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody>{visible.map(q => <tr key={q.id}><td>#{q.estimate_number}</td><td>{new Date(q.issued_at || q.created_at).toLocaleDateString('en-CA')}</td><td>{q.status}</td><td>{cad(Number(q.grand_total))}</td><td><div className="button-row">{!trash && q.status === 'draft' && <button className="secondary compact" onClick={() => edit(q)}>Edit</button>}<button className="secondary compact" onClick={() => void download(q)}><Download size={14}/> PDF</button><button className="secondary compact" disabled={busy} onClick={() => void (trash ? trashAction(q,'restore') : remove(q))}>{trash ? 'Restore' : 'Move to trash'}</button>{trash && <button className="secondary compact" disabled={busy} onClick={()=>void trashAction(q,'purge')}><Trash2 size={14}/> Delete permanently</button>}</div></td></tr>)}</tbody></table></div>}
     {editing && <div className="modal-backdrop"><section className={`detail-modal quotation-editor ${previewExpanded ? 'preview-expanded' : ''}`} role="dialog" aria-modal="true" aria-label="Quotation editor">
       <div className="panel-heading"><div><h2>{editing === 'new' ? 'New quotation' : `Estimate #${editing.estimate_number}`}</h2><p className="small muted">Prepared for {customer.name}</p></div><button className="text-button" disabled={busy} onClick={() => { if (!dirty || window.confirm('Discard unsaved quotation changes?')) { setEditing(null); setDirty(false); } }}>Close</button></div>
       <div className="quotation-editor-main"><div className="quotation-form-pane">
       <label className="quotation-address">Address 1<input value={address} maxLength={1000} onChange={e => { setAddress(e.target.value); setDirty(true); }}/></label>
       <div className="table-scroll"><table className="quotation-edit-table"><thead><tr><th>Product/Service</th><th>Description</th><th>Qty.</th><th>Unit Price (CAD)</th><th>Total</th><th></th></tr></thead><tbody>{items.map((row, index) => <tr key={row.id || index}><td><input aria-label={`Product/Service row ${index+1}`} maxLength={200} value={row.product_service} onChange={e => setRow(index, { product_service: e.target.value })}/></td><td><textarea aria-label={`Description row ${index+1}`} maxLength={2000} rows={2} value={row.description} onChange={e => setRow(index, { description: e.target.value })}/></td><td><input aria-label={`Quantity row ${index+1}`} type="number" min="0" max="999999999" step="1" value={row.quantity} onChange={e => setRow(index, { quantity: e.target.value })}/></td><td><input aria-label={`Unit price row ${index+1}`} type="number" min="0" max="9999999999" step="0.01" value={row.unit_price} onChange={e => setRow(index, { unit_price: e.target.value })}/></td><td>{cad(lineCents(row)/100)}</td><td><button className="text-button" aria-label={`Delete row ${index+1}`} disabled={items.length===1} onClick={() => { setItems(rows => rows.filter((_,i) => i!==index)); setDirty(true); }}><Trash2 size={16}/></button></td></tr>)}</tbody></table></div>
       <button className="secondary" onClick={() => { setItems(rows => [...rows, blankRow()]); setDirty(true); }}><Plus size={14}/> Add row</button>
-      <div className="quotation-live-totals"><p>Subtotal <strong>{cad(sum.subtotal)}</strong></p><p>HST ON (13%) <strong>{cad(sum.tax)}</strong></p><p>Total <strong>{cad(sum.total)}</strong></p></div>
+      <div className="quotation-live-totals"><p>Subtotal <strong>{cad(sum.subtotal)}</strong></p><label>Tax % <input aria-label="Quotation tax percent" type="number" min="0" max="100" step="0.01" value={taxRate} onChange={e=>{setTaxRate(Number(e.target.value));setDirty(true);}}/></label><p>Tax ({taxRate}%) <strong>{cad(sum.tax)}</strong></p><p>Total <strong>{cad(sum.total)}</strong></p></div>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="button-row"><button className="secondary" disabled={busy||preview} onClick={() => void save(false)}><Save size={15}/> Save draft</button><button className="primary" disabled={busy||preview} onClick={() => void save(true)}>Issue quotation</button></div>
       <p className="small muted">The estimate number is assigned when first saved. Issued quotations are fixed; deleting one never reuses its number.</p>

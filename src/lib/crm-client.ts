@@ -32,8 +32,11 @@ export async function crmRequest(query: string, options?: RequestInit, previewSe
     const id = [...ids][0]; return { status: 'matched', customer: store.customers.find(c => c.id === id), ...Object.fromEntries(Object.entries(store).filter(([k]) => k !== 'customers').map(([k, rows]) => [k, rows.filter(r => r.customer_id === id)])), message: 'Preview match. Confirm the site and equipment before preparing a response.' };
   }
   if (!store[entity]) throw new Error('Unknown record type.');
-  if (!options?.method || options.method === 'GET') return { records: store[entity].filter(r => entity === 'customers' || r.customer_id === params.get('customer_id')) };
+  if (!options?.method || options.method === 'GET') return { records: store[entity].filter(r => entity === 'customers' ? (!!r.deleted_at === (params.get('trash')==='true')) : r.customer_id === params.get('customer_id')) };
   const input = JSON.parse(String(options.body));
+  if(entity==='customers' && (options.method==='DELETE' || params.get('action')==='restore-customer')) {
+    const row=store.customers.find(r=>r.id===input.id && r.updated_at===input.updated_at);if(!row)throw new Error('Customer changed. Reload it.');row.deleted_at=options.method==='DELETE'?new Date().toISOString():null;row.updated_at=new Date().toISOString();localStorage.setItem(KEY,JSON.stringify(store));return {success:true};
+  }
   if (!input.name?.trim()) throw new Error('Name is required.');
   if (input.email) input.email = input.email.trim().toLowerCase();
   if (entity === 'contacts' && store.contacts.some(c => c.customer_id === input.customer_id && c.email === input.email && c.id !== input.id)) throw new Error('This contact email already exists for this customer.');

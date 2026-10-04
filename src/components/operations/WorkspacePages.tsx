@@ -1,6 +1,7 @@
 import { TrackingOverview } from './TrackingOverview';
 import { EmailReport } from './EmailReport';
 import { CorrespondentActivity } from './CorrespondentActivity';
+import { EmailBrainPanel } from './EmailBrainPanel';
 import { SHOW_RATES } from '../../lib/features';
 import { MailConnectionCard } from './MailConnection';
 import { useState } from 'react';
@@ -26,6 +27,7 @@ export function Overview({ data, navigate, onQuote, preview }: { preview: boolea
       <button onClick={()=>navigate('customers','new')}><Users size={28}/><strong>Add new customer</strong><span>Create a customer record</span><ArrowRight size={18}/></button>
       <button onClick={()=>navigate('quotations')}><FileText size={28}/><strong>Create a quotation</strong><span>Choose a customer to begin</span><ArrowRight size={18}/></button>
     </div>
+    {!preview && <EmailBrainPanel navigate={navigate}/>}
     <div className="dashboard-panels">
       {preview ? <section className="panel"><div className="panel-heading"><h2>Email activity</h2><button className="text-button" onClick={()=>navigate('inbox')}>Open inbox <ArrowRight size={14}/></button></div>{pending.slice(0,4).map(m=><button className="book-summary" key={m.id} onClick={()=>navigate('inbox',m.id)}><span><strong>{m.from}</strong><small>{m.subject}</small></span></button>)}{!pending.length&&<p className="small muted">No messages need review.</p>}</section> : <TrackingOverview navigate={navigate}/>}
       <section className="panel quotation-panel"><div className="panel-heading"><h2>Earlier calculator quotes</h2><button className="text-button" onClick={()=>navigate('customers')}>View customers <ArrowRight size={14}/></button></div><div className="pipeline-total"><strong>{data.quotes.length}</strong><span>saved in this browser</span></div><div className="pipeline-bar">{data.quotes.length ? stages.map((stage,index)=><span key={stage} className={`segment-${index}`} style={{width:`${data.quotes.filter(q=>q.status===stage).length/data.quotes.length*100}%`}}/>) : <span className="empty-segment"/>}</div>{stages.map((stage,index)=><div className="pipeline-row" key={stage}><span><i className={`stage-dot dot-${index}`}/>{stage}</span><strong>{data.quotes.filter(q=>q.status===stage).length}</strong></div>)}<button className="secondary full pipeline-action" onClick={onQuote}>Start a new quotation <ArrowRight size={14}/></button></section>

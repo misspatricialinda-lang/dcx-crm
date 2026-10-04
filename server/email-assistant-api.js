@@ -3,7 +3,7 @@ import { configuration, getSession } from './auth-core.js';
 import { n8nConfig } from './n8n-config.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
-const actionable = draft => draft && !['sent', 'sending', 'submitted', 'uncertain'].includes(draft.status) && !!draft.original_ai_body;
+const actionable = draft => draft && !draft.deleted_at && !['sent', 'sending', 'submitted', 'uncertain'].includes(draft.status) && !!draft.original_ai_body;
 const reply = (res, status, value) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)); };
 const checked = async query => { const { data, error } = await query; if (error) throw error; return data; };
 
@@ -27,10 +27,29 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
   const db = injected.db || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const url = new URL(req.url || '/', 'http://localhost');
   try {
+    if(req.method==='GET' && url.searchParams.get('action')==='location') {
+      const id=url.searchParams.get('id');if(!uuid(id))return reply(res,400,{error:'Invalid conversation.'});
+      const thread=await checked(db.from('email_threads').select('id,provider_thread_key').eq('id',id).maybeSingle());
+      if(!thread)return reply(res,404,{error:'Conversation not found.'});
+      const drafts=await checked(db.from('email_drafts').select('id,status,original_ai_body,deleted_at').eq('thread_id',id).is('deleted_at',null).limit(10));
+      return reply(res,200,{conversation:thread.provider_thread_key,ai_draft:!!drafts.find(actionable)});
+    }
+    if(req.method==='GET' && url.searchParams.get('action')==='for-message') {
+      const internetId=url.searchParams.get('internet_message_id');
+      if(!internetId || internetId.length>1000)return reply(res,400,{error:'Message identity is required.'});
+      const messages=await checked(db.from('email_messages').select('thread_id').eq('internet_message_id',internetId).limit(10));
+      const ids=[...new Set(messages.map(m=>m.thread_id))];
+      if(!ids.length)return reply(res,200,{draft:null});
+      const drafts=await checked(db.from('email_drafts').select('id,thread_id,current_body,to_addresses,status,original_ai_body,updated_at,deleted_at').in('thread_id',ids).is('deleted_at',null).order('updated_at',{ascending:false}).limit(10));
+      return reply(res,200,{draft:drafts.find(actionable)||null});
+    }
     if (req.method === 'GET' && url.searchParams.get('action') === 'queue') {
       // The draft is the source of truth; a thread may have a stale status after an AI rewrite.
-      const drafts = await checked(db.from('email_drafts').select('id,thread_id,status,original_ai_body,updated_at').not('original_ai_body', 'is', null).order('updated_at', { ascending: false }).limit(500));
-      const current = [...new Map(drafts.filter(actionable).map(d => [d.thread_id, d])).values()];
+      const trash = url.searchParams.get('trash') === 'true';
+      let draftQuery=db.from('email_drafts').select('id,thread_id,status,original_ai_body,updated_at,deleted_at').not('original_ai_body', 'is', null);
+      draftQuery=trash?draftQuery.not('deleted_at','is',null):draftQuery.is('deleted_at',null).neq('status','sent').neq('status','sending').neq('status','submitted').neq('status','uncertain');
+      const drafts = await checked(draftQuery.order('updated_at', { ascending: false }).limit(500));
+      const current = drafts.filter(d => trash ? !!d.deleted_at : actionable(d)).filter((d,i,a)=>a.findIndex(other=>other.thread_id===d.thread_id)===i);
       if (!current.length) return reply(res, 200, { records: [] });
       const threads = await checked(db.from('email_threads').select('id,subject,status,priority,customer_id,last_message_at,mailbox_id').in('id', current.map(d => d.thread_id)));
       const queueMessages = await checked(db.from('email_messages').select('thread_id,direction,sender,body_text,has_attachments,occurred_at').in('thread_id', current.map(d => d.thread_id)).order('occurred_at', { ascending: false }).limit(1000));
@@ -45,8 +64,10 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       if (!uuid(id)) return reply(res, 400, { error: 'Invalid conversation.' });
       const thread = await checked(db.from('email_threads').select('id,subject,status,priority,customer_id,last_message_at,mailbox_id').eq('id', id).maybeSingle());
       if (!thread) return reply(res, 404, { error: 'Conversation not found.' });
-      const draft = await checked(db.from('email_drafts').select('id,thread_id,current_body,original_ai_body,to_addresses,subject,status,updated_at').eq('thread_id', id).neq('status', 'sent').order('updated_at', { ascending: false }).limit(1).maybeSingle());
-      if (!actionable(draft)) return reply(res, 404, { error: 'This conversation has no current AI reply draft.' });
+      let draftQuery = db.from('email_drafts').select('id,thread_id,current_body,original_ai_body,to_addresses,subject,status,updated_at,deleted_at').eq('thread_id', id).neq('status', 'sent');
+      draftQuery = url.searchParams.get('trash') === 'true' ? draftQuery.not('deleted_at','is',null) : draftQuery.is('deleted_at',null);
+      const draft = await checked(draftQuery.order('updated_at', { ascending: false }).limit(1).maybeSingle());
+      if (!draft || (!draft.deleted_at && !actionable(draft))) return reply(res, 404, { error: 'This conversation has no current AI reply draft.' });
       const messages = [];
       for (let from = 0; from < 1000; from += 200) {
         const page = await checked(db.from('email_messages').select('id,thread_id,sender,to_addresses,cc_addresses,subject,body_text,body_html,body_loaded,direction,has_attachments,occurred_at').eq('thread_id', id).order('occurred_at', { ascending: true }).order('id', { ascending: true }).range(from, from + 199));
@@ -62,8 +83,13 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     }
     if (req.method !== 'POST') return reply(res, 400, { error: 'Unknown AI reply request.' });
     const input = await bodyOf(req);
+    if (['delete','restore'].includes(input?.action)) {
+      if(!uuid(input.draft_id)||!Number.isFinite(Date.parse(input.updated_at))) return reply(res,400,{error:'Reload the draft before changing it.'});
+      const result=await checked(db.rpc('crm_draft_trash',{p_id:input.draft_id,p_updated_at:input.updated_at,p_restore:input.action==='restore',p_actor:session.email}));
+      return reply(res,200,{success:true,...result});
+    }
     if (!input || typeof input !== 'object' || !['rewrite', 'regenerate', 'save', 'send'].includes(input.action) || !uuid(input.thread_id) || !uuid(input.draft_id)) return reply(res, 400, { error: 'Invalid AI reply request.' });
-    const draft = await checked(db.from('email_drafts').select('id,thread_id,status,original_ai_body').eq('id', input.draft_id).eq('thread_id', input.thread_id).maybeSingle());
+    const draft = await checked(db.from('email_drafts').select('id,thread_id,status,original_ai_body,deleted_at').eq('id', input.draft_id).eq('thread_id', input.thread_id).maybeSingle());
     if (!actionable(draft)) return reply(res, 409, { error: 'The AI draft is no longer ready for review.' });
     if (input.action === 'rewrite' && (typeof input.instruction !== 'string' || !input.instruction.trim() || input.instruction.length > 4000)) return reply(res, 400, { error: 'Enter an instruction for the AI.' });
     if (input.action === 'save' && (typeof input.body_text !== 'string' || !input.body_text.trim() || input.body_text.length > 50000)) return reply(res, 400, { error: 'Draft body is missing or too long.' });

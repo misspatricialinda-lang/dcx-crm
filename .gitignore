@@ -13,6 +13,7 @@ tmp/
 Complete guide and Data from client/
 *.pst
 *.ost
+*.pst.tmp
 
 # Generated caches and test output
 __pycache__/

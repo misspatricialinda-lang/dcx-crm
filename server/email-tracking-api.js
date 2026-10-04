@@ -65,7 +65,7 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
     const command = (name,input) => checked(db.rpc('email_command',{p_mailbox:box.id,p_action:name,p_input:input,p_actor:actor}));
     const workerCommand = (name,input) => checked(db.rpc('email_worker',{p_mailbox:box.id,p_action:name,p_input:input}));
     const getThread = async id => { requireId(id); const t=await checked(db.from('email_threads').select('*').eq('mailbox_id',box.id).eq('id',id).maybeSingle()); if (!t) { const e=new Error('Conversation not found.');e.status=404;throw e; } return t; };
-    const getDraft = async id => { requireId(id); const d=await checked(db.from('email_drafts').select('*').eq('id',id).maybeSingle()); if(!d) throw new Error('Draft not found.'); await getThread(d.thread_id); return d; };
+    const getDraft = async id => { requireId(id); const d=await checked(db.from('email_drafts').select('*').eq('id',id).is('deleted_at',null).maybeSingle()); if(!d) throw new Error('Draft not found.'); await getThread(d.thread_id); return d; };
     const refFor = m => provider==='hostinger' ? renewHostingerReference(m.provider_ref,env) : m.provider_ref;
     const hydrate = async m => {
       const {record}=await mail('message',{id:refFor(m)});
@@ -127,7 +127,7 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
         if(cursor) q=q.or(`occurred_at.lt.${cursor.at},and(occurred_at.eq.${cursor.at},id.lt.${cursor.id})`);
         const [messages,drafts,activity,jobs,replyTarget]=await Promise.all([
           checked(q.order('occurred_at',{ascending:false}).order('id',{ascending:false}).limit(31)),
-          checked(db.from('email_drafts').select('*').eq('thread_id',thread.id).neq('status','sent').limit(1)),
+          checked(db.from('email_drafts').select('*').eq('thread_id',thread.id).is('deleted_at',null).neq('status','sent').limit(1)),
           checked(db.from('email_activity').select('*').eq('thread_id',thread.id).order('id',{ascending:false}).limit(30)),
           checked(db.from('email_automation_jobs').select('id,kind,status,error,attempts,execution_id,created_at').eq('thread_id',thread.id).order('created_at',{ascending:false}).limit(10)),
           checked(db.from('email_messages').select('*').eq('thread_id',thread.id).eq('direction','incoming').order('occurred_at',{ascending:false}).order('id',{ascending:false}).limit(1).maybeSingle())
@@ -180,7 +180,7 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
       }
       if(worker && input.generate_drafts===true) for(const id of touched) {
         const thread=await getThread(id);
-        const drafts=await checked(db.from('email_drafts').select('id').eq('thread_id',id).neq('status','sent').limit(1));
+        const drafts=await checked(db.from('email_drafts').select('id').eq('thread_id',id).is('deleted_at',null).neq('status','sent').limit(1));
         const latest=await checked(db.from('email_messages').select('direction,occurred_at').eq('thread_id',id).order('occurred_at',{ascending:false}).limit(1).maybeSingle());
         // Initial history imports must not generate years of obsolete replies.
         if(thread.status==='needs_attention'&&!drafts.length&&latest?.direction==='incoming'&&Date.parse(latest.occurred_at)>=Date.now()-7*86400000) await command('queue_draft',{thread_id:id,request_id:`auto:${id}:${thread.message_version}`});
@@ -248,7 +248,8 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
         const customer=thread.customer_id?await checked(db.from('crm_customers').select('*').eq('id',thread.customer_id).single()):null;
         const history={};
         if(customer)for(const entity of ['sites','equipment','purchases','services'])history[entity]=await checked(db.from(`crm_${entity}`).select('*').eq('customer_id',customer.id).order('updated_at',{ascending:false}).limit(10));
-        return respond(res,200,{thread,customer,customer_history:history,history_limit_per_type:10,messages:hydrated.reverse(),truncated:messages.length===10});
+        const email_brain=await checked(db.rpc('crm_ai_context',{p_thread_id:thread.id}));
+        return respond(res,200,{thread,customer,email_brain,customer_history:history,history_limit_per_type:10,messages:hydrated.reverse(),truncated:messages.length===10});
       }
       if(action==='complete') {text(input.body,50000,true);text(input.summary || '',10000);}
       else text(input.error,2000,true);

@@ -1,5 +1,5 @@
 export const entities = {
-  customers: { required: ['name'], fields: ['name', 'phone', 'notes', 'contact', 'email', 'billing_address', 'price_book'] },
+  customers: { required: ['name'], fields: ['name', 'phone', 'notes', 'contact', 'email', 'billing_address', 'price_book', 'relationship_type'] },
   contacts: { required: ['name', 'email'], fields: ['name', 'email', 'phone', 'notes'] },
   sites: { required: ['name', 'address'], fields: ['name', 'address', 'notes'] },
   equipment: { required: ['name', 'site_id'], fields: ['name', 'site_id', 'model', 'serial_number', 'battery_configuration', 'source', 'confirmed_on', 'notes'] },
@@ -34,5 +34,9 @@ export function validateRecord(entity, input) {
   }
   if ((entity === 'contacts' || (entity === 'customers' && output.email)) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(output.email)) throw new Error('Enter a valid email address.');
   if (entity === 'customers' && !output.price_book) output.price_book = 'standard';
+  if (entity === 'customers') {
+    output.relationship_type ||= 'customer';
+    if (!['customer','qualified_company','lead','supplier','other'].includes(output.relationship_type)) throw new Error('Select a valid relationship classification.');
+  }
   return output;
 }

@@ -7,10 +7,10 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        -5040,
+        864
       ],
-      "id": "1c1dc603-0be2-48b9-b140-2520865e69db",
+      "id": "8bc57107-7084-48e3-9480-47cbba3361ac",
       "name": "Called by Workflow 2"
     },
     {
@@ -20,10 +20,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        0
+        -4816,
+        864
       ],
-      "id": "d9540f9c-9039-4ab5-b856-7d8034102fb0",
+      "id": "6559bec4-7f6d-48e8-bcd7-eae909f7e31f",
       "name": "Validate Send Input"
     },
     {
@@ -54,10 +54,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        440,
-        0
+        -4592,
+        864
       ],
-      "id": "e39121cc-a84c-4cc8-a89c-6c998c28f30c",
+      "id": "dd8e0187-8cc8-44c2-ba79-5ddcb308756b",
       "name": "Input Valid"
     },
     {
@@ -67,16 +67,16 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
-        220
+        -4368,
+        1088
       ],
-      "id": "ae8a3d67-9fff-4817-8362-1f3381006a70",
+      "id": "a38adaa6-3363-4db3-a2c8-0d5917714488",
       "name": "Reject Invalid Input"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH claim AS (\n UPDATE email_drafts d SET status='sending', updated_at=now()\n WHERE d.id=$1::uuid AND d.thread_id=$2::uuid AND d.revision=$3::integer\n   AND d.status IN ('editing','approved') AND nullif(trim(d.current_body),'') IS NOT NULL\n   AND EXISTS (\n     SELECT 1 FROM email_messages m\n     JOIN email_threads t ON t.id=d.thread_id\n     JOIN email_mailboxes mb ON mb.id=t.mailbox_id\n     WHERE m.id=d.reply_to_message_id AND m.thread_id=d.thread_id AND m.mailbox_id=t.mailbox_id\n       AND m.direction='incoming' AND nullif(m.provider_ref,'') IS NOT NULL\n       AND lower(m.sender) <> ALL(string_to_array($4,';'))\n       AND lower(d.to_addresses->>0) <> ALL(string_to_array($4,';'))\n       AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(m.to_addresses) recipient\n                   WHERE lower(recipient) = ANY(string_to_array($4,';')))\n       AND lower(mb.address)=lower($5)\n       AND jsonb_array_length(d.to_addresses)=1\n       AND lower(d.to_addresses->>0)=lower(m.sender)\n   )\n RETURNING d.*\n)\nSELECT claim.id AS draft_id, claim.thread_id, claim.revision, claim.current_body,\n claim.subject, claim.to_addresses, claim.reply_to_message_id,\n m.provider_ref AS reply_provider_ref, t.mailbox_id, t.provider_thread_key, mb.address AS mailbox_address\nFROM (SELECT 1) one LEFT JOIN claim ON true\nLEFT JOIN email_messages m ON m.id=claim.reply_to_message_id\nLEFT JOIN email_threads t ON t.id=claim.thread_id\nLEFT JOIN email_mailboxes mb ON mb.id=t.mailbox_id;",
+        "query": "WITH claim AS (\n UPDATE email_drafts d SET status='sending', updated_at=now()\n WHERE d.id=$1::uuid AND d.thread_id=$2::uuid AND d.revision=$3::integer\n   AND d.deleted_at IS NULL AND d.status IN ('editing','approved') AND nullif(trim(d.current_body),'') IS NOT NULL\n   AND EXISTS (\n     SELECT 1 FROM email_messages m\n     JOIN email_threads t ON t.id=d.thread_id\n     JOIN email_mailboxes mb ON mb.id=t.mailbox_id\n     WHERE m.id=d.reply_to_message_id AND m.thread_id=d.thread_id AND m.mailbox_id=t.mailbox_id\n       AND m.direction='incoming' AND nullif(m.provider_ref,'') IS NOT NULL\n       AND lower(m.sender) <> ALL(string_to_array($4,';'))\n       AND lower(d.to_addresses->>0) <> ALL(string_to_array($4,';'))\n       AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(m.to_addresses) recipient\n                   WHERE lower(recipient) = ANY(string_to_array($4,';')))\n       AND lower(mb.address)=lower($5)\n       AND jsonb_array_length(d.to_addresses)=1\n       AND lower(d.to_addresses->>0)=lower(m.sender)\n   )\n RETURNING d.*\n)\nSELECT claim.id AS draft_id, claim.thread_id, claim.revision, claim.current_body,\n claim.subject, claim.to_addresses, claim.reply_to_message_id,\n m.provider_ref AS reply_provider_ref, t.mailbox_id, t.provider_thread_key, mb.address AS mailbox_address\nFROM (SELECT 1) one LEFT JOIN claim ON true\nLEFT JOIN email_messages m ON m.id=claim.reply_to_message_id\nLEFT JOIN email_threads t ON t.id=claim.thread_id\nLEFT JOIN email_mailboxes mb ON mb.id=t.mailbox_id;",
         "options": {
           "queryReplacement": "={{ $('Validate Send Input').first().json.draft_id }}, {{ $('Validate Send Input').first().json.thread_id }}, {{ $('Validate Send Input').first().json.draft_revision }}, {{ $('Validate Send Input').first().json.own_addresses.join(';') }}, {{ $('Validate Send Input').first().json.mailbox_address }}"
         }
@@ -84,18 +84,18 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        660,
-        -80
+        -4368,
+        784
       ],
-      "id": "37991697-2bff-450a-bad7-919f1b4d8dd4",
+      "id": "9a57503c-57db-4679-8a63-3a6501203343",
       "name": "Claim Draft for Send",
+      "onError": "continueErrorOutput",
       "credentials": {
         "postgres": {
           "id": "ddSGCZFM8FCex3f8",
           "name": "Postgres account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -125,10 +125,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        880,
-        -80
+        -4160,
+        784
       ],
-      "id": "fdfefcee-1f5e-45f3-adce-c082cfbd6f43",
+      "id": "2f30a03f-80c5-40ee-92b1-1788f0d74857",
       "name": "Draft Claimed"
     },
     {
@@ -138,15 +138,14 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        160
+        -3936,
+        1024
       ],
-      "id": "1bcf6db9-2a9c-4c8e-9790-85042b1037c9",
+      "id": "d44eaf87-41fb-4580-a8f6-129c1248275f",
       "name": "Reject Unsendable Draft"
     },
     {
       "parameters": {
-        "resource": "message",
         "operation": "reply",
         "messageId": {
           "__rl": true,
@@ -166,18 +165,19 @@
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [
-        1100,
-        -180
+        -3984,
+        832
       ],
-      "id": "d42b888e-e573-403b-88e2-21fec8a12a92",
+      "id": "01799349-f827-42e6-9cd5-37c04bd70ef5",
       "name": "Create Outlook Reply Draft",
+      "webhookId": "72e6ca65-93bf-484d-9785-6a0578c49421",
+      "onError": "continueErrorOutput",
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "MiaNT3d34K2LD3Nb",
           "name": "Microsoft Outlook account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -207,10 +207,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1320,
-        -180
+        -3712,
+        688
       ],
-      "id": "7e8fdedb-794c-4891-87bd-fd6c26327ace",
+      "id": "5a99c138-40b4-4cfa-bf73-ad372a473709",
       "name": "Has Uploaded Files"
     },
     {
@@ -220,39 +220,38 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        -300
+        -3488,
+        560
       ],
-      "id": "46093401-a30f-409a-b48d-77cd9262393f",
+      "id": "76e95956-f00f-4eec-95c1-8e160a380e52",
       "name": "Build Binary Attachments"
     },
     {
       "parameters": {
         "resource": "messageAttachment",
-        "operation": "add",
         "messageId": {
           "__rl": true,
           "mode": "id",
           "value": "={{ $('Create Outlook Reply Draft').first().json.id }}"
         },
-        "binaryPropertyName": "data",
         "options": {}
       },
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [
-        1760,
-        -300
+        -3280,
+        560
       ],
-      "id": "6f4f76f9-13c2-4736-ac14-47342c45651c",
+      "id": "97165e48-d92d-4cac-bc80-1bba3a059c35",
       "name": "Attach File to Outlook Draft",
+      "webhookId": "447de8a8-fd3f-44cf-baf6-937192a7d08d",
+      "onError": "continueErrorOutput",
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "MiaNT3d34K2LD3Nb",
           "name": "Microsoft Outlook account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -261,10 +260,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
-        -300
+        -3056,
+        560
       ],
-      "id": "acbc8a84-0acd-4b8e-b3eb-0165fa9efe35",
+      "id": "9fe603e6-30c9-425a-8d5d-bd1606703e40",
       "name": "All Attachments Added"
     },
     {
@@ -275,24 +274,24 @@
           "__rl": true,
           "mode": "id",
           "value": "={{ $('Create Outlook Reply Draft').first().json.id }}"
-        },
-        "to": ""
+        }
       },
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [
-        2200,
-        -180
+        -2832,
+        688
       ],
-      "id": "aaa56eb0-28aa-4008-9a3d-d4189afaf163",
+      "id": "50cbc006-5ca6-4aa9-b33a-76b51a4d527a",
       "name": "Send Outlook Reply Draft",
+      "webhookId": "873f2a43-20b2-4a1b-aeb5-13f867d99654",
+      "onError": "continueErrorOutput",
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "MiaNT3d34K2LD3Nb",
           "name": "Microsoft Outlook account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -305,18 +304,18 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        2420,
-        -180
+        -2608,
+        688
       ],
-      "id": "3173fb06-db16-4981-ba21-ce31d50c1377",
+      "id": "0f8b3232-8d17-4844-a43e-fb7a6ec6a2a9",
       "name": "Record Outgoing Email",
+      "onError": "continueErrorOutput",
       "credentials": {
         "postgres": {
           "id": "ddSGCZFM8FCex3f8",
           "name": "Postgres account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -346,10 +345,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2640,
-        -180
+        -2160,
+        704
       ],
-      "id": "f4d05708-15cb-4b46-9728-cfb9f8137716",
+      "id": "ac567f06-cdc9-466e-9c11-d21f92b7cf3d",
       "name": "Outgoing Email Recorded"
     },
     {
@@ -359,10 +358,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2860,
-        -260
+        -1632,
+        848
       ],
-      "id": "c29a6f59-aced-4f37-b9bb-ea9826a6928e",
+      "id": "dd0e897a-6df1-405e-a41b-74642ec375a5",
       "name": "Return Sent Result"
     },
     {
@@ -376,18 +375,18 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        1540,
-        120
+        -3488,
+        976
       ],
-      "id": "25066c94-b048-4428-92d7-1d0a75527d48",
+      "id": "88f7cc9b-2b69-4bfb-bb04-31acea09cc4b",
       "name": "Release Unsent Draft",
+      "onError": "continueErrorOutput",
       "credentials": {
         "postgres": {
           "id": "ddSGCZFM8FCex3f8",
           "name": "Postgres account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -396,10 +395,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
-        120
+        -3280,
+        976
       ],
-      "id": "f904edac-fd50-4241-b82f-5536eb14fc28",
+      "id": "4b4e3393-bb18-4f6b-8cb0-636ddb8cce51",
       "name": "Return Before Send Failure"
     },
     {
@@ -413,18 +412,18 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        2420,
-        120
+        -2608,
+        992
       ],
-      "id": "2fa9299f-4be7-4845-b1ce-f26e45d878df",
+      "id": "d21118b6-e933-46a6-be0f-59dd333d7f81",
       "name": "Mark Send Uncertain",
+      "onError": "continueErrorOutput",
       "credentials": {
         "postgres": {
           "id": "ddSGCZFM8FCex3f8",
           "name": "Postgres account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -433,10 +432,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2640,
-        120
+        -2400,
+        976
       ],
-      "id": "2fb9402f-afe7-474a-940e-05d030189a30",
+      "id": "50282b92-05c6-4eb3-8ad4-07f69ddc0fb7",
       "name": "Return Uncertain Send"
     },
     {
@@ -446,10 +445,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        300
+        -4160,
+        1168
       ],
-      "id": "d2789c9f-f87e-4001-8f14-493360e35be5",
+      "id": "7b61aff0-5f8a-49ff-90f4-894a1f19b655",
       "name": "Return Claim Error"
     },
     {
@@ -480,10 +479,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2090,
-        -300
+        -2944,
+        560
       ],
-      "id": "2b4a12fe-d26d-4b87-88a8-63a0ee2ce60a",
+      "id": "60b6918a-395e-4ce7-bec6-c4f28cc6092f",
       "name": "All Files Attached"
     },
     {
@@ -514,10 +513,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2860,
-        -260
+        -2000,
+        560
       ],
-      "id": "ee2a1326-32af-4042-a89a-4adc1f42574a",
+      "id": "29145437-e2b2-4746-a4cd-a2974f8ea18f",
       "name": "Has Sent Attachments"
     },
     {
@@ -527,10 +526,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
-        -360
+        -1424,
+        528
       ],
-      "id": "7d5e150e-4704-42c2-b367-a83c37ba0928",
+      "id": "adb7686b-4e8b-4c23-91a8-f22b4b2a5cc9",
       "name": "Build Sent Attachment Records"
     },
     {
@@ -564,18 +563,18 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        3300,
-        -360
+        -1200,
+        528
       ],
-      "id": "770df9fc-df36-444f-ad2c-87b74a93fe04",
+      "id": "fec6b740-20ca-4f08-b194-d0c5d2990f8c",
       "name": "Record Sent Attachment",
+      "onError": "continueRegularOutput",
       "credentials": {
         "supabaseApi": {
           "id": "UWlDdtOOI61vsKM8",
           "name": "Supabase account"
         }
-      },
-      "onError": "continueRegularOutput"
+      }
     },
     {
       "parameters": {
@@ -584,10 +583,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3520,
-        -360
+        -992,
+        528
       ],
-      "id": "54367a40-3b58-4887-b4ba-9eff0493c814",
+      "id": "c2efc0c0-82e8-404a-9b16-08206308d627",
       "name": "Finish Attachment Records"
     },
     {
@@ -607,18 +606,19 @@
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [
-        1210,
-        -180
+        -3824,
+        688
       ],
-      "id": "7b3bacf4-4fb5-4370-9aea-baf46c53a65a",
+      "id": "6d7fa461-5e10-4761-91ef-5b238800ce88",
       "name": "Replace Quoted Reply Body",
+      "webhookId": "badf800e-8e84-44e7-9fd1-8393922cc498",
+      "onError": "continueErrorOutput",
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "MiaNT3d34K2LD3Nb",
           "name": "Microsoft Outlook account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -635,18 +635,19 @@
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [
-        2200,
-        -180
+        -2832,
+        688
       ],
-      "id": "c6f16de8-8b06-42c3-a036-03d9e2040ce7",
+      "id": "93d3ba2b-30f3-4b57-9474-3934942f597e",
       "name": "Inspect Outlook Draft Recipients",
+      "webhookId": "adec418e-7c8a-403f-b9f1-8e1b9d285686",
+      "onError": "continueErrorOutput",
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "MiaNT3d34K2LD3Nb",
           "name": "Microsoft Outlook account"
         }
-      },
-      "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -655,10 +656,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2420,
-        -180
+        -2384,
+        576
       ],
-      "id": "1a462212-a207-4f85-9a12-110761e73767",
+      "id": "249b735e-2164-458e-a1b3-7dce5d52cf59",
       "name": "Verify Exact Recipient"
     },
     {
@@ -689,10 +690,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2640,
-        -180
+        -2080,
+        1008
       ],
-      "id": "81af4bd5-3c06-4fe4-bd41-ffd9c93f3a60",
+      "id": "116a8077-c3f3-40fa-bc13-9d52c3f30f5f",
       "name": "Recipient Safe"
     }
   ],
@@ -1077,5 +1078,10 @@
   "pinData": {},
   "meta": {
     "templateCredsSetupCompleted": false
-  }
+  },
+  "active": false,
+  "id": "ia38UVye6S2PhzEp",
+  "nodeGroups": [],
+  "activeVersionId": "b9bce705-1d6b-4ed2-862f-b463ebe87db7",
+  "versionId": "b9bce705-1d6b-4ed2-862f-b463ebe87db7"
 }

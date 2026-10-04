@@ -14,7 +14,7 @@ const sample=(id,extra={})=>({ id,conversationId:'conversation-1',subject:'Batte
 test('application-credential Outlook sync resumes the durable delta checkpoint', async t => {
   const pg=new PGlite();t.after(()=>pg.close());
   await pg.exec('create role anon; create role authenticated; create role service_role;');
-  for(const migration of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql']) await pg.exec(await readFile(new URL('../supabase/migrations/'+migration,import.meta.url),'utf8'));
+  for(const migration of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql','202609270001_customer_quotations.sql','202610040002_workspace_controls.sql']) await pg.exec(await readFile(new URL('../supabase/migrations/'+migration,import.meta.url),'utf8'));
   const env={APP_LOGIN_EMAIL:'owner@example.com',APP_LOGIN_PASSWORD:'long-test-password',APP_SESSION_SECRET:'s'.repeat(40),MAIL_PROVIDER:'microsoft',MICROSOFT_TENANT_ID:'tenant-sync',MICROSOFT_CLIENT_ID:'client-sync',MICROSOFT_CLIENT_SECRET:'test-secret',MICROSOFT_MAILBOX:'sales@example.com'};
   const checkpoint='https://graph.microsoft.com/v1.0/users/sales%40example.com/mailFolders/inbox/messages/delta?$deltatoken=checkpoint';
   const paths=[];
@@ -54,7 +54,7 @@ test('cursor and workflow validation reject forged filters and invalid dates',()
 test('real PostgreSQL tracking transactions: deduplication, revisions, approvals, dispatch locking and AI leases',async t=>{
   const db=new PGlite();t.after(()=>db.close());
   await db.exec('create role anon; create role authenticated; create role service_role;');
-  for(const migration of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql']) await db.exec(await readFile(new URL('../supabase/migrations/'+migration,import.meta.url),'utf8'));
+  for(const migration of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql','202609270001_customer_quotations.sql','202610040002_workspace_controls.sql']) await db.exec(await readFile(new URL('../supabase/migrations/'+migration,import.meta.url),'utf8'));
   await db.query("insert into email_mailboxes(id,provider,address) values($1,'microsoft','sales@example.com')",[mailbox]);
   const command=async(action,input,actor='owner@example.com')=>(await db.query('select email_command($1,$2,$3::jsonb,$4) as result',[mailbox,action,JSON.stringify(input),actor])).rows[0].result;
   const worker=async(action,input)=>(await db.query('select email_worker($1,$2,$3::jsonb) as result',[mailbox,action,JSON.stringify(input)])).rows[0].result;
@@ -108,7 +108,7 @@ test('real PostgreSQL tracking transactions: deduplication, revisions, approvals
 test('tracking API persists provider sync and drafts, scopes automation, and sends each revision once',async t=>{
  const pg=new PGlite();t.after(()=>pg.close());
  await pg.exec('create role anon; create role authenticated; create role service_role;');
- for(const file of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql'])await pg.exec(await readFile(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'));
+ for(const file of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql','202609270001_customer_quotations.sql','202610040002_workspace_controls.sql'])await pg.exec(await readFile(new URL('../supabase/migrations/'+file,import.meta.url),'utf8'));
  const env={APP_LOGIN_EMAIL:'owner@example.com',APP_LOGIN_PASSWORD:'test-password-long',APP_SESSION_SECRET:'s'.repeat(40),MAIL_PROVIDER:'microsoft',MICROSOFT_MAILBOX:'sales@example.com',EMAIL_TRACKING_TOKEN:'w'.repeat(40)};
  const cookie='dcx_session='+createSession({email:env.APP_LOGIN_EMAIL,password:env.APP_LOGIN_PASSWORD,secret:env.APP_SESSION_SECRET});
  let sends=0,externalDraft;
