@@ -150,6 +150,13 @@ function Dashboard({
     const saved=await saveRates({...source,id:`agreement-${crypto.randomUUID()}`,name:name.trim(),version:1,status:'Draft',taxPercent:sheet.taxPercent,items:sheet.lines.map(({rateItemId,quantity:_quantity,...line})=>({...line,id:rateItemId}))});
     update(d=>({...d,draft:{...sheet,bookId:saved.id,bookVersion:saved.version}}));
   }
+  async function createCustomerAgreement(name:string,sourceId:string):Promise<string>{
+    if(!name.trim()||name.trim().length>120)throw new Error('Enter an agreement name up to 120 characters.');
+    if(data.books.some(b=>b.name.trim().toLowerCase()===name.trim().toLowerCase()))throw new Error('An agreement with this name already exists.');
+    const source=data.books.find(b=>b.id===sourceId);if(!source)throw new Error('Choose an agreement to copy.');
+    const saved=await saveRates({...structuredClone(source),id:`agreement-${crypto.randomUUID()}`,name:name.trim(),version:1,status:'Draft',updatedAt:new Date().toISOString()});
+    return saved.id;
+  }
   async function deletePricing(id: string) {
     if(data.books.length<2)throw new Error('Keep at least one pricing agreement.');
     if(data.customers.some(c=>c.bookId===id))throw new Error('Change the agreement of customers using this pricing first.');
@@ -448,6 +455,8 @@ function Dashboard({
             )}
             {tab === "customers" && (
               <CustomerHub
+                onCreateAgreement={createCustomerAgreement}
+                onDeleteAgreement={deletePricing}
                 preview={preview}
                 data={data}
                 focusId={focusId}

@@ -215,3 +215,5 @@
 .email-brain-panel{margin:24px 0}.email-brain-panel .button-row{flex-wrap:wrap;margin:14px 0;gap:8px}.email-brain-panel details{margin-top:18px;border-top:1px solid #dce6de;padding-top:14px}.email-brain-panel summary{cursor:pointer;font-weight:600}.email-brain-panel small{display:block;margin-top:5px;color:#6b7c73}.email-brain-panel td select{max-width:175px}.email-brain-panel .form-grid{margin:16px 0}.email-brain-panel .crm-record{flex-wrap:wrap}
 
 .inbox-ai-compose{margin:0 0 18px;padding:18px;background:#fff}.inbox-ai-preview{max-height:260px;overflow:auto;white-space:pre-wrap}.conversation-content>.inline-mail-composer{margin:0 0 18px}.email-report input[type=date]{max-width:165px}.email-report select{min-width:185px}
+
+.customer-agreement-field{border:0;padding:0;margin:0;min-width:0}.customer-agreement-field legend{font-size:12px;color:#65788a;margin-bottom:6px}.pricing-agreement-picker{display:grid;gap:8px}.agreement-create{display:grid;gap:6px;padding:10px;background:#f5f9f7;border:1px solid #d8e6dc;border-radius:7px}

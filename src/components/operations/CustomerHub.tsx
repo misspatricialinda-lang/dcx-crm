@@ -1,3 +1,4 @@
+import { PricingAgreementPicker } from './PricingAgreementPicker';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Plus, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 import type { Client, Workspace } from '../../types/operations';
@@ -15,7 +16,7 @@ const fields: Record<string, Field[]> = {
   services: [{ key: 'name', label: 'Service performed', required: true }, { key: 'equipment_id', label: 'Related equipment', type: 'equipment' }, { key: 'occurred_on', label: 'Service date', required: true, type: 'date' }, { key: 'source', label: 'Service report / confirmation reference', required: true }, { key: 'notes', label: 'Notes', type: 'textarea' }],
 };
 const labels: Record<string, string> = { contacts: 'Contacts', sites: 'Sites', equipment: 'Equipment', purchases: 'Purchases', services: 'Service history' };
-export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQuotes, quoteFocus }: { preview: boolean; onLoaded: (clients: Client[]) => void; onQuote: (id: string) => void; focusId?: string; data: Workspace; renderQuotes: (id: string) => ReactNode; quoteFocus?: string }) {
+export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQuotes, quoteFocus, onCreateAgreement, onDeleteAgreement }: { preview: boolean; onLoaded: (clients: Client[]) => void; onQuote: (id: string) => void; focusId?: string; data: Workspace; renderQuotes: (id: string) => ReactNode; quoteFocus?: string; onCreateAgreement:(name:string,sourceId:string)=>Promise<string>; onDeleteAgreement:(id:string)=>Promise<void> }) {
   const api = (query: string, options?: RequestInit) => crmRequest(query, options, preview ? data : undefined);
   const [customers, setCustomers] = useState<Row[]>([]);
   const [selected, setSelected] = useState(focusId && !['new','proposal','quotation'].includes(focusId) ? focusId : '');
@@ -50,7 +51,8 @@ export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQ
     e.preventDefault(); if (!edit || saving) return;
     setSaving(true); setSaveError('');
     try {
-      const result = await api(`entity=${edit.entity}`, { method: edit.row.id ? 'PATCH' : 'POST', body: JSON.stringify(edit.row) });
+      const row=edit.entity==='customers'?{...edit.row,price_book:edit.row.price_book||data.books[0]?.id}:edit.row;
+      const result = await api(`entity=${edit.entity}`, { method: edit.row.id ? 'PATCH' : 'POST', body: JSON.stringify(row) });
       if (edit.entity === 'customers') setSelected(result.record.id);
       setEdit(null); setRevision(r => r + 1); setMessage('Saved.');
     } catch (e) { setSaveError((e as Error).message); }
@@ -81,6 +83,7 @@ export function CustomerHub({ preview, onLoaded, onQuote, focusId, data, renderQ
     {edit && <div className="modal-backdrop"><form className="detail-modal" role="dialog" aria-modal="true" aria-label="Customer record editor" onSubmit={save}><div className="panel-heading"><h2>{edit.row.id ? 'Edit' : 'Add'} {edit.entity === 'customers' ? 'customer' : labels[edit.entity].toLowerCase()}</h2><button className="text-button" type="button" disabled={saving} onClick={() => setEdit(null)}>Close</button></div>
       <div className="form-grid">{fields[edit.entity].map(f => {
         const set = (value: string) => setEdit({ ...edit, row: { ...edit.row, [f.key]: value } });
+        if(f.type==='books')return <fieldset className="customer-agreement-field" key={f.key}><legend>{f.label}</legend><PricingAgreementPicker books={data.books} value={edit.row[f.key]||data.books[0]?.id||''} onChange={set} onCreate={onCreateAgreement} onDelete={onDeleteAgreement} disabled={saving}/></fieldset>;
         return <label className={f.type === 'textarea' ? 'span-2' : ''} key={f.key}>{f.label}{f.required ? ' *' : ''}{f.type === 'classification' ? <select value={edit.row[f.key] || 'customer'} onChange={e=>set(e.target.value)}>{['customer','qualified_company','lead','supplier','other'].map(role=><option key={role} value={role}>{role.replace(/_/g,' ')}</option>)}</select> : f.type === 'textarea' ? <textarea disabled={saving} maxLength={10000} rows={3} value={edit.row[f.key] || ''} onChange={e => set(e.target.value)} /> : ['sites','equipment','books'].includes(f.type || '') ? <select disabled={saving} required={f.required} value={edit.row[f.key] || (f.type === 'books' ? 'standard' : '')} onChange={e => set(e.target.value)}>{f.type !== 'books' && <option value="">Select {f.required ? 'a record' : '(optional)'}</option>}{(f.type === 'books' ? data.books : history[f.type!] || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select> : <input disabled={saving} required={f.required} maxLength={1000} type={f.type || 'text'} min={f.type === 'number' ? 0 : undefined} max={f.type === 'number' ? 999999999 : undefined} step={f.type === 'number' ? '0.01' : undefined} value={edit.row[f.key] ?? ''} onChange={e => set(e.target.value)} />}</label>;
       })}</div>{saveError && <p className="form-error" role="alert">{saveError}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button></form></div>}
   </div>;

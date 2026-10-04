@@ -4,6 +4,26 @@ async function preview(page:any){
   await page.route('**/api/auth',route=>route.fulfill({json:{configured:false,user:null}}));
   await page.goto('/');await page.getByRole('button',{name:/Open local dashboard preview/}).click();
 }
+
+test('customer pricing agreement picker creates and removes named agreements without losing customer edits',async({page})=>{
+  await preview(page);await page.getByRole('button',{name:'Customers',exact:true}).click();
+  await page.getByRole('button',{name:'Add customer',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Customer record editor'});
+  await dialog.getByLabel('Company / customer name').fill('New company');
+  await dialog.getByRole('button',{name:'Add agreement',exact:true}).click();
+  await dialog.getByLabel('New customer pricing agreement name').fill('New company pricing');
+  await dialog.getByRole('button',{name:'Create agreement',exact:true}).click();
+  const picker=dialog.getByLabel('Pricing agreement',{exact:true});
+  await expect(picker.locator('option:checked')).toHaveText('New company pricing · v1');
+  await expect(dialog.getByLabel('Company / customer name')).toHaveValue('New company');
+  page.on('dialog',d=>d.accept());await dialog.getByRole('button',{name:'Remove agreement',exact:true}).click();
+  await expect(picker.getByRole('option',{name:'New company pricing · v1',exact:true})).toHaveCount(0);
+  await expect(dialog.getByLabel('Company / customer name')).toHaveValue('New company');
+  await picker.selectOption('standard');await dialog.getByRole('button',{name:'Remove agreement',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('Change the agreement of customers');
+  await expect(picker.getByRole('option',{name:/Standard/})).toHaveCount(1);
+  await page.screenshot({path:'tmp/browser-results/customer-agreement-controls.png'});
+});
 test('quotation tax is editable and immediately recalculates the total',async({page})=>{
   await preview(page);await page.getByRole('button',{name:'Quotations',exact:true}).click();
   await page.getByRole('button',{name:'New quotation',exact:true}).first().click();
