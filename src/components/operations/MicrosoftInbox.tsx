@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { trackingRequest } from '../../lib/email-tracking';
 import { InboxAiDraft } from "./InboxAiDraft";
 import { TrackedInbox } from "./TrackedInbox";
 import DOMPurify from "dompurify";
@@ -168,6 +169,14 @@ export function ConnectedInbox({
       />}
     </div>
   );
+}
+async function moveMessageToAi(messageId:string){
+  const prepared=await trackingRequest('prepare_ai',{}, {message_id:messageId});
+  if(prepared.needs_generation){
+    const response=await fetch('/api/email-assistant',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'regenerate',thread_id:prepared.draft.thread_id,draft_id:prepared.draft.id,request_id:crypto.randomUUID()})});
+    const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not generate an AI reply.');
+  }
+  window.dispatchEvent(new CustomEvent('dcx-open-ai',{detail:prepared.draft.thread_id}));
 }
 function MicrosoftInbox({
   customers,
@@ -434,6 +443,10 @@ function MicrosoftInbox({
         if (target.isRead) manualUnread.current.add(target.id);
         else manualUnread.current.delete(target.id);
       }
+      if(destinationId==='__ai_drafts__'){
+        const source=[...active.messages].reverse().find(m=>!m.isDraft&&m.from?.emailAddress.address?.toLowerCase()!==mailbox.toLowerCase())||active.latest;
+        await moveMessageToAi(source.id);return;
+      }
       await mailRequest(
         type,
         {},
@@ -510,7 +523,7 @@ function MicrosoftInbox({
         <button disabled={!active || busy} onClick={() => quickAction("move", "deleteditems")}>
           <Trash2 size={16} /> Delete
         </button>
-        <label className="ribbon-move"><Folder size={16} /><select aria-label="Move selected message to folder" disabled={!active || busy} value="" onChange={event => { const destinationId = event.target.value; if (destinationId) void quickAction('move', destinationId); event.target.value = ''; }}><option value="">Move to</option>{folders.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
+        <label className="ribbon-move"><Folder size={16} /><select aria-label="Move selected message to folder" disabled={!active || busy} value="" onChange={event => { const destinationId = event.target.value; if (destinationId) void quickAction('move', destinationId); event.target.value = ''; }}><option value="">Move to</option><option value="__ai_drafts__">AI Draft Replies</option>{folders.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
         <span className="ribbon-separator" />
         {active?.latest.isDraft ? <button disabled={busy} onClick={() => openSelectedEditor('edit')}><PenLine size={16}/> Edit draft</button> : <>
           <button disabled={!active || busy} onClick={() => openSelectedEditor('reply')}><Reply size={16}/> Reply</button>
@@ -964,6 +977,7 @@ function LiveConversation({
     setActionBusy(true);
     setError("");
     try {
+      if(destinationId==='__ai_drafts__'){await moveMessageToAi(m.id);return;}
       await mailRequest(
         type,
         {},
@@ -1003,6 +1017,24 @@ function LiveConversation({
         </p>
       </header>
       <div className="conversation-content">
+        {editor && (
+          <div ref={editorNode} className="inline-mail-composer"><DraftEditor
+            key={`${editor.replyTo}-${editor.replyAll}-${editor.forwardOf}-${editor.existing?.id}-${editor.nonce || ''}`}
+            {...editor}
+            onDirty={(v) => {
+              editorDirty.current = v;
+              onDirty(v);
+            }}
+            onChanged={onChanged}
+            onSent={() => edit(undefined)}
+            provider={provider}
+            mailbox={mailbox}
+            source={messages.find(message => message.id === (editor.replyTo || editor.forwardOf))}
+            onDiscard={() => { editorDirty.current = false; onDirty(false); setEditor(undefined); }}
+            customers={customers}
+            customerId={matches.length === 1 ? matches[0].id : undefined}
+          /></div>
+        )}
         <InboxAiDraft internetId={[...messages].reverse().find(m=>!m.isDraft && m.from?.emailAddress.address?.toLowerCase()!==mailbox.toLowerCase())?.internetMessageId} revision={revision}/>
         {error && (
           <p className="notice amber" role="alert">
@@ -1157,7 +1189,7 @@ function LiveConversation({
                       </button>
                       {provider === 'microsoft' && <label className="mail-move-picker">Move to
                         <select aria-label={`Move ${m.subject || 'message'} to folder`} disabled={actionBusy} value="" onChange={event => { const destinationId = event.target.value; if (destinationId) void action(m, 'move', false, destinationId); event.target.value = ''; }}>
-                          <option value="">Choose folder</option>
+                          <option value="">Choose folder</option><option value="__ai_drafts__">AI Draft Replies</option>
                           {folders.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}
                         </select>
                       </label>}
@@ -1171,24 +1203,7 @@ function LiveConversation({
             )}
           </article>
         ))}
-        {editor && (
-          <div ref={editorNode} className="inline-mail-composer"><DraftEditor
-            key={`${editor.replyTo}-${editor.replyAll}-${editor.forwardOf}-${editor.existing?.id}-${editor.nonce || ''}`}
-            {...editor}
-            onDirty={(v) => {
-              editorDirty.current = v;
-              onDirty(v);
-            }}
-            onChanged={onChanged}
-            onSent={() => edit(undefined)}
-            provider={provider}
-            mailbox={mailbox}
-            source={messages.find(message => message.id === (editor.replyTo || editor.forwardOf))}
-            onDiscard={() => { editorDirty.current = false; onDirty(false); setEditor(undefined); }}
-            customers={customers}
-            customerId={matches.length === 1 ? matches[0].id : undefined}
-          /></div>
-        )}
+
       </div>
     </section>
   );

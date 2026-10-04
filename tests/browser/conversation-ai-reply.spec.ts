@@ -28,7 +28,10 @@ test('inbox displays saved AI drafts and supports delete and restore without del
   });
   await page.route('**/api/crm?*', route => route.fulfill({ json: { records: [], books: [], history: [] } }));
   await page.route('**/api/notifications?*', route => route.fulfill({ json: { records: [], unread: 0 } }));
-  await page.route('**/api/tracking?*', route => route.fulfill({ json: { attention: 0, drafts: 0, waiting: 0, due: 0, recent: [] } }));
+  await page.route('**/api/tracking?*', route => {
+    if(new URL(route.request().url()).searchParams.get('action')==='prepare_ai')return route.fulfill({json:{draft:draft(),needs_generation:false}});
+    return route.fulfill({ json: { attention: 0, drafts: 0, waiting: 0, due: 0, recent: [] } });
+  });
   await page.goto('/#inbox');
   await expect(page.getByRole('button',{name:'Analyze conversation'})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Review / edit AI reply'})).toBeVisible();
@@ -40,5 +43,16 @@ test('inbox displays saved AI drafts and supports delete and restore without del
   await page.getByRole('button',{name:'Move to AI Draft Replies',exact:true}).click();
   await page.getByRole('button',{name:'AI Draft Replies',exact:true}).click();
   await expect(page.getByLabel('Edit AI reply draft')).toHaveValue('Thanks. Please share your availability.');
-  await page.screenshot({path:'tmp/browser-results/ai-draft-controls.png'});
+  await page.getByRole('navigation',{name:'Email views'}).getByRole('button',{name:'Inbox',exact:true}).click();
+  await expect(page.getByLabel('Move selected message to folder').getByRole('option',{name:'AI Draft Replies',exact:true})).toHaveCount(1);
+  await page.getByLabel('Move selected message to folder').selectOption('__ai_drafts__');
+  await expect(page.getByLabel('Edit AI reply draft')).toHaveValue('Thanks. Please share your availability.');
+  await page.getByRole('navigation',{name:'Email views'}).getByRole('button',{name:'Inbox',exact:true}).click();
+  await page.getByRole('button',{name:'Reply',exact:true}).first().click();
+  await expect(page.locator('.inline-mail-composer')).toBeVisible();
+  expect(await page.locator('.conversation-content').evaluate(el=>{
+    const editor=el.querySelector('.inline-mail-composer'),history=el.querySelector('.conversation-message');
+    return !!editor&&!!history&&!!(editor.compareDocumentPosition(history)&Node.DOCUMENT_POSITION_FOLLOWING);
+  })).toBe(true);
+  await page.screenshot({path:'tmp/browser-results/inbox-top-composer.png',fullPage:true});
 });

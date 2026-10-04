@@ -90,7 +90,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     }
     if (!input || typeof input !== 'object' || !['rewrite', 'regenerate', 'save', 'send'].includes(input.action) || !uuid(input.thread_id) || !uuid(input.draft_id)) return reply(res, 400, { error: 'Invalid AI reply request.' });
     const draft = await checked(db.from('email_drafts').select('id,thread_id,status,original_ai_body,deleted_at').eq('id', input.draft_id).eq('thread_id', input.thread_id).maybeSingle());
-    if (!actionable(draft)) return reply(res, 409, { error: 'The AI draft is no longer ready for review.' });
+    if (!actionable(draft) && !(input.action==='regenerate' && draft && !draft.deleted_at && draft.status==='editing' && !draft.original_ai_body)) return reply(res, 409, { error: 'The AI draft is no longer ready for review.' });
     if (input.action === 'rewrite' && (typeof input.instruction !== 'string' || !input.instruction.trim() || input.instruction.length > 4000)) return reply(res, 400, { error: 'Enter an instruction for the AI.' });
     if (input.action === 'save' && (typeof input.body_text !== 'string' || !input.body_text.trim() || input.body_text.length > 50000)) return reply(res, 400, { error: 'Draft body is missing or too long.' });
     if (input.action === 'send') {
@@ -107,6 +107,11 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     let result;
     try { result = JSON.parse(raw); } catch { return reply(res, 502, { error: 'AI email workflow returned an invalid response. Your draft is preserved.' }); }
     if (!upstream.ok || !result?.success) return reply(res, 502, { error: String(result?.error || result?.message || 'AI email workflow failed. Your draft is preserved.').slice(0, 500) });
+    if(input.action==='regenerate' && !draft.original_ai_body){
+      const generated=await checked(db.from('email_drafts').select('current_body,deleted_at,status').eq('id',draft.id).single());
+      if(!generated.current_body || generated.deleted_at || generated.status!=='editing')return reply(res,409,{error:'The draft changed during generation. Reload it.'});
+      await checked(db.from('email_drafts').update({original_ai_body:generated.current_body}).eq('id',draft.id).is('original_ai_body',null).is('deleted_at',null).eq('status','editing'));
+    }
     return reply(res, 200, result);
   } catch (error) {
     return reply(res, 500, { error: error?.message || 'AI email request failed.' });

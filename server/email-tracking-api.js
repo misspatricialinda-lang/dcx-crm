@@ -83,7 +83,10 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
         const days=Number(url.searchParams.get('days') || 7), timezone=url.searchParams.get('timezone') || 'America/Toronto';
         if(![1,7,30].includes(days))throw new Error('Choose 1, 7 or 30 days.');
         try { new Intl.DateTimeFormat('en',{timeZone:timezone}); } catch { throw new Error('Invalid reporting timezone.'); }
-        return respond(res,200,{report:await checked(db.rpc('email_report',{p_mailbox:box.id,p_days:days,p_timezone:timezone})),mailbox:{address:box.address,last_synced_at:box.last_synced_at}});
+        const from=url.searchParams.get('from'), through=url.searchParams.get('through');
+        const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value||'') && Number.isFinite(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+        if((from||through)&&(!validDate(from)||!validDate(through)||through<from||Date.parse(through)-Date.parse(from)>365*86400000))throw new Error('Choose a valid date range of up to 366 days.');
+        return respond(res,200,{report:await checked(from?db.rpc('email_report_range',{p_mailbox:box.id,p_from:from,p_to:through,p_timezone:timezone}):db.rpc('email_report',{p_mailbox:box.id,p_days:days,p_timezone:timezone})),mailbox:{address:box.address,last_synced_at:box.last_synced_at}});
       }
       if(action==='overview') {
         const count=async query=>{const {count,error}=await query;if(error)throw error;return count || 0;};
@@ -203,6 +206,25 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
     if(action==='save_draft') {
       requireId(input.thread_id);requireId(input.reply_to_message_id);revision(input.revision);text(input.body,50000,true);
       return respond(res,200,{draft:safeDraft(await command(action,{thread_id:input.thread_id,reply_to_message_id:input.reply_to_message_id,revision:input.revision,body:input.body}))});
+    }
+    if(action==='prepare_ai') {
+      text(input.message_id,1000,true);
+      const selected=(await mail('message',{id:input.message_id})).record;
+      if(!selected || selected.isDraft)throw new Error('Choose the received email rather than an Outlook draft.');
+      let saved=await command('ingest',normalizeMessage(selected,provider,box.address));
+      if(provider==='microsoft' && selected.conversationId){
+        let page=await mail('thread',{conversation:selected.conversationId});
+        for(let count=0;count<20;count++){
+          for(const record of page.records||[])if(!record.isDraft)await command('ingest',normalizeMessage(record,provider,box.address));
+          if(!page.next)break;
+          if(count===19)throw new Error('Conversation is too large. Synchronize its history before preparing a reply.');
+          page=await mail('page',{cursor:page.next});
+        }
+      }
+      const latest=await checked(db.from('email_messages').select('*').eq('thread_id',saved.thread_id).eq('direction','incoming').order('occurred_at',{ascending:false}).limit(1).maybeSingle());
+      if(latest)await hydrate(latest);
+      const draft=await checked(db.rpc('crm_prepare_ai_draft',{p_thread:saved.thread_id,p_actor:actor}));
+      return respond(res,200,{draft:safeDraft(draft),needs_generation:!draft.original_ai_body});
     }
     if(action==='queue_draft') {
       if((env.EMAIL_TRACKING_TOKEN || '').length<32) return respond(res,503,{error:'Configure the n8n tracking worker before requesting AI drafts. You can write and save a reply now.'});

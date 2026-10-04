@@ -2,11 +2,47 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { normalizeMessage } from '../server/email-tracking-model.js';
+import { trackingHandler } from '../server/email-tracking-api.js';
+import { trackingDb } from './helpers/tracking-db.mjs';
+import { createSession, configuration } from '../server/auth-core.js';
+
+test('move-to-AI API stores an untracked conversation and hydrates the reply identity without a worker token',async t=>{
+  const pg=await setup(t), db=trackingDb(pg);
+  const env={APP_LOGIN_EMAIL:'owner@example.com',APP_LOGIN_PASSWORD:'long-test-password',APP_SESSION_SECRET:'s'.repeat(40),MAIL_PROVIDER:'microsoft',MICROSOFT_MAILBOX:'owner@example.com'};
+  const message={id:'new-message',conversationId:'new-conversation',internetMessageId:'<new-message@example.com>',subject:'UPS service',from:{emailAddress:{address:'des@example.com'}},toRecipients:[{emailAddress:{address:'owner@example.com'}}],receivedDateTime:'2026-10-04T10:00:00Z',body:{contentType:'text',content:'Please quote next month.'},isDraft:false};
+  const req={method:'POST',url:'/?action=prepare_ai',body:{message_id:message.id},headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie:`dcx_session=${createSession(configuration(env))}`}};
+  let output;const res={setHeader(){},end(v){output=JSON.parse(v);},statusCode:200};
+  const provider=async action=>action==='message'?{record:message}:action==='thread'?{records:[message],next:null}:action==='attachments'?{records:[],next:null}:{mailbox:'owner@example.com'};
+  await trackingHandler(req,res,env,{db,provider});
+  assert.equal(res.statusCode,200,JSON.stringify(output));assert.equal(output.needs_generation,true);assert.deepEqual(output.draft.to_addresses,['des@example.com']);
+  const stored=(await pg.query('select * from email_messages')).rows;assert.equal(stored.length,1);assert.equal(stored[0].body_loaded,true);assert.equal(stored[0].internet_message_id,message.internetMessageId);
+  await trackingHandler(req,res,env,{db,provider});assert.equal(res.statusCode,200);assert.equal((await pg.query('select count(*)::int n from email_drafts')).rows[0].n,1);
+});
+
+test('custom report days respect Toronto boundaries and moving to AI drafts creates, reuses and restores one reply',async t=>{
+  const pg=await setup(t);
+  const box=(await pg.query("insert into email_mailboxes(provider,address) values('microsoft','owner@example.com') returning id")).rows[0].id;
+  const ingest=async(id,when,sender='des@example.com')=>(await pg.query("select email_command($1,'ingest',$2::jsonb,'test') result",[box,JSON.stringify(normalizeMessage({id,conversationId:'custom-day',subject:'Re: UPS service',from:{emailAddress:{address:sender}},toRecipients:[{emailAddress:{address:'owner@example.com'}}],receivedDateTime:when,sentDateTime:when,body:{contentType:'text',content:'Please quote.'}},'microsoft','owner@example.com'))])).rows[0].result;
+  const m=await ingest('start','2026-10-03T04:00:00Z');
+  await ingest('last','2026-10-04T03:59:59Z');
+  await ingest('next','2026-10-04T04:00:00Z','owner@example.com');
+  const report=(await pg.query("select email_report_range($1,'2026-10-03','2026-10-03','America/Toronto') result",[box])).rows[0].result;
+  assert.equal(report.received,2);assert.equal(report.sent,0);assert.equal(report.daily.length,1);assert.equal(report.conversations_replied,0);
+  await assert.rejects(pg.query("select email_report_range($1,'2026-10-04','2026-10-03','UTC')",[box]),/valid date range/);
+  const prep=async()=>(await pg.query("select crm_prepare_ai_draft($1,'test') result",[m.thread_id])).rows[0].result;
+  const d=await prep();assert.equal(d.original_ai_body,null);assert.equal(d.current_body,'');assert.deepEqual(d.to_addresses,['des@example.com']);assert.equal((await prep()).id,d.id);
+  await pg.query("update email_drafts set current_body='Reviewed reply',original_ai_body='AI reply' where id=$1",[d.id]);
+  await pg.query("select crm_draft_trash(id,updated_at,false,'test') from email_drafts where id=$1",[d.id]);
+  const restored=await prep();assert.equal(restored.id,d.id);assert.equal(restored.deleted_at,null);assert.equal(restored.current_body,'Reviewed reply');
+  await pg.query("update email_drafts set status='sending' where id=$1",[d.id]);await assert.rejects(prep(),/Dispatch pending/);
+  assert.equal((await pg.query('select count(*)::int n from email_messages')).rows[0].n,3);
+});
 
 async function setup(t){
   const pg=new PGlite();t.after(()=>pg.close());
   await pg.exec('create role anon;create role authenticated;create role service_role;');
-  for(const name of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql','202609270001_customer_quotations.sql','202610040001_email_memory.sql','202610040002_workspace_controls.sql','202610040003_email_relationships_learning.sql'])await pg.exec(await readFile(new URL('../supabase/migrations/'+name,import.meta.url),'utf8'));
+  for(const name of ['202609160001_customer_crm.sql','202609230001_manageable_workspace.sql','202609230002_email_tracking.sql','202609240001_reporting_and_proposals.sql','202609270001_customer_quotations.sql','202610040001_email_memory.sql','202610040002_workspace_controls.sql','202610040003_email_relationships_learning.sql','202610040004_mail_navigation_reporting.sql'])await pg.exec(await readFile(new URL('../supabase/migrations/'+name,import.meta.url),'utf8'));
   return pg;
 }
 test('workspace migrations preserve customer history and quotation snapshots through trash, restore and purge',async t=>{
