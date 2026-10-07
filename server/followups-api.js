@@ -13,6 +13,22 @@ const checked = async query => { const { data, error } = await query; if (error)
 const outputText = response => (response.output || []).flatMap(item => item.content || []).filter(item => item.type === 'output_text').map(item => item.text).join('');
 const ownText = text => String(text || '').replace(/(\n>|\nFrom:\s|\n-----\s*Original Message|\nOn\s[^\n]{0,200}\swrote:|\n_{10,})[\s\S]*$/i, '').trim();
 
+// DCX works on Toronto time, so reminders land at 9:00 AM there (daylight saving included).
+const TZ = 'America/Toronto';
+const torontoDay = date => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+export function torontoNineAm(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const guess = Date.UTC(y, m - 1, d, 13);
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: 'numeric', hourCycle: 'h23' }).format(new Date(guess)));
+  return new Date(guess + (9 - hour) * 3600000);
+}
+export function businessDaysAhead(days, now = new Date()) {
+  const [y, m, d] = torontoDay(now).split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  for (let added = 0; added < days;) { date.setUTCDate(date.getUTCDate() + 1); if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) added++; }
+  return torontoNineAm(date.toISOString().slice(0, 10));
+}
+
 export const reasonLabels = {
   quote: 'Quotation sent, no reply yet',
   awaiting_answer: 'Waiting for an answer to our question',
@@ -144,8 +160,14 @@ export async function followupsHandler(req, res, env = process.env, injected = {
         input.thread_id = found[0].id;
       }
       if (!uuid(input.thread_id) || !['snooze', 'remind', 'done'].includes(input.op)) return reply(res, 400, { error: 'Choose a conversation and an action.' });
-      if (input.op !== 'done' && !Number.isFinite(Date.parse(input.until))) return reply(res, 400, { error: 'Choose a reminder date.' });
-      const result = await checked(db.rpc('crm_set_followup', { p_thread: input.thread_id, p_action: input.op, p_until: input.op === 'done' ? null : new Date(input.until).toISOString(), p_actor: session.email }));
+      // Reminder times are always 9:00 AM Toronto, whatever timezone the browser is in.
+      let until = null;
+      if (input.op !== 'done') {
+        if (Number.isInteger(input.days) && input.days >= 1 && input.days <= 60) until = businessDaysAhead(input.days);
+        else if (typeof input.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.date) && Number.isFinite(Date.parse(input.date))) until = torontoNineAm(input.date);
+        else return reply(res, 400, { error: 'Choose a reminder date.' });
+      }
+      const result = await checked(db.rpc('crm_set_followup', { p_thread: input.thread_id, p_action: input.op, p_until: until && until.toISOString(), p_actor: session.email }));
       return reply(res, 200, { success: true, followup: result });
     }
     if (action === 'settings') {

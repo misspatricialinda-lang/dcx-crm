@@ -58,4 +58,5 @@ test('follow-ups folder, conversation tag and the follow-up bar actions', async 
   await page.locator('.thread-item', { hasText: 'General question' }).click();
   await page.getByLabel('Remind me to follow up').selectOption('Tomorrow');
   await expect.poll(() => posted.find(p => p.op === 'remind')?.provider_thread_key).toBe('conv-other');
+  expect(posted.find(p => p.op === 'remind')).toMatchObject({ days: 1 }); // the server turns this into 9 AM Toronto
 });

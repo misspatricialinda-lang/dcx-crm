@@ -82,3 +82,13 @@ test('only n8n, with the shared secret, can start the follow-up run', async () =
   assert.equal((await call({ 'x-webhook-secret': 'wrong-secret-for-n8n-calls!' })).statusCode, 401);
   assert.equal((await call({})).statusCode, 401);
 });
+
+test('reminder times are 9:00 AM Toronto whatever the computer timezone is', async () => {
+  const { torontoNineAm, businessDaysAhead } = await import('../server/followups-api.js');
+  assert.equal(torontoNineAm('2026-10-08').toISOString(), '2026-10-08T13:00:00.000Z', 'summer time (EDT)');
+  assert.equal(torontoNineAm('2026-12-01').toISOString(), '2026-12-01T14:00:00.000Z', 'winter time (EST)');
+  // Clicked "Tomorrow" at 5:21 PM Pakistan time on Wednesday Oct 7: Thursday 9 AM Toronto, not midnight.
+  assert.equal(businessDaysAhead(1, new Date('2026-10-07T12:21:00Z')).toISOString(), '2026-10-08T13:00:00.000Z');
+  assert.equal(businessDaysAhead(1, new Date('2026-10-09T15:00:00Z')).toISOString(), '2026-10-12T13:00:00.000Z', 'Friday → Monday');
+  assert.equal(businessDaysAhead(1, new Date('2026-10-08T02:00:00Z')).toISOString(), '2026-10-08T13:00:00.000Z', '10 PM Wednesday in Toronto counts from Wednesday');
+});
