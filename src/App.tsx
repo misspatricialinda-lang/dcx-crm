@@ -81,7 +81,6 @@ function Dashboard({
   preview: boolean;
 }) {
   const mailConnection = useMailConnection();
-  const [calendarOpen, setCalendarOpen] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
   useEffect(() => {
     if (preview) return;
@@ -533,8 +532,6 @@ function Dashboard({
         <button className={tab === 'notifications' ? 'active' : ''} onClick={() => navigate('notifications')}><Bell size={20}/><span>Alerts</span>{notificationCount > 0 && <b>{notificationCount > 9 ? '9+' : notificationCount}</b>}</button>
         <button onClick={() => setMobileNav(true)}><Menu size={20}/><span>More</span></button>
       </nav>
-      {!calendarOpen && <button className="calendar-launcher" type="button" onClick={() => { setCalendarOpen(true); setMobileNav(false); }} aria-label="Open Calendar Agent" aria-expanded={false} aria-controls="calendar-widget"><span className="calendar-launcher-label"><strong>Calendar Agent</strong><small><i/> Online</small></span><span className="calendar-launcher-circle"><CalendarDays size={26}/><i className="calendar-launcher-dot"/></span></button>}
-      {calendarOpen && <aside className="calendar-widget" id="calendar-widget" aria-label="Calendar Agent chat"><button className="calendar-widget-close" aria-label="Close Calendar Agent" onClick={() => setCalendarOpen(false)}><X size={17}/></button><CalendarAgent preview={preview}/></aside>}
       {toast && (
         <div className="toast" role="status">
           <ShieldCheck size={17} />

@@ -1,4 +1,3 @@
-import { TrackingOverview } from './TrackingOverview';
 import { EmailReport } from './EmailReport';
 import { EmailBrainPanel } from './EmailBrainPanel';
 import { SHOW_RATES } from '../../lib/features';
@@ -10,7 +9,6 @@ import { bookUsable, money } from '../../lib/costing';
 import { downloadJson } from '../../lib/workspace';
 
 export function Overview({ data, navigate, onQuote, preview }: { preview: boolean; data: Workspace; navigate: (tab: string, id?: string) => void; onQuote: () => void }) {
-  const stages = ['Draft', 'Pending review', 'Approved'];
   const pending = data.emails.filter(m => m.status === 'Needs review');
   return <>
     <div className="page-heading dashboard-heading"><h1>Dashboard</h1><button className="primary" onClick={onQuote}><Plus size={16}/> New quotation</button></div>
@@ -27,10 +25,6 @@ export function Overview({ data, navigate, onQuote, preview }: { preview: boolea
       <button onClick={()=>navigate('quotations')}><FileText size={28}/><strong>Create a quotation</strong><span>Choose a customer to begin</span><ArrowRight size={18}/></button>
     </div>
     {!preview && <EmailBrainPanel navigate={navigate}/>}
-    <div className="dashboard-panels">
-      {preview ? <section className="panel"><div className="panel-heading"><h2>Email activity</h2><button className="text-button" onClick={()=>navigate('inbox')}>Open inbox <ArrowRight size={14}/></button></div>{pending.slice(0,4).map(m=><button className="book-summary" key={m.id} onClick={()=>navigate('inbox',m.id)}><span><strong>{m.from}</strong><small>{m.subject}</small></span></button>)}{!pending.length&&<p className="small muted">No messages need review.</p>}</section> : <TrackingOverview navigate={navigate}/>}
-      <section className="panel quotation-panel"><div className="panel-heading"><h2>Earlier calculator quotes</h2><button className="text-button" onClick={()=>navigate('customers')}>View customers <ArrowRight size={14}/></button></div><div className="pipeline-total"><strong>{data.quotes.length}</strong><span>saved in this browser</span></div><div className="pipeline-bar">{data.quotes.length ? stages.map((stage,index)=><span key={stage} className={`segment-${index}`} style={{width:`${data.quotes.filter(q=>q.status===stage).length/data.quotes.length*100}%`}}/>) : <span className="empty-segment"/>}</div>{stages.map((stage,index)=><div className="pipeline-row" key={stage}><span><i className={`stage-dot dot-${index}`}/>{stage}</span><strong>{data.quotes.filter(q=>q.status===stage).length}</strong></div>)}<button className="secondary full pipeline-action" onClick={onQuote}>Start a new quotation <ArrowRight size={14}/></button></section>
-    </div>
     {SHOW_RATES && <section className="panel dashboard-rate-panel"><div className="panel-heading"><h2>Your rate books</h2><button className="text-button" onClick={()=>navigate('pricing')}>Manage rates <ArrowRight size={14}/></button></div>{data.books.map(book=><button className="book-summary" key={book.id} onClick={()=>navigate('pricing')}><span><strong>{book.name}</strong><small>Version {book.version} ? {book.items.length} rates</small></span><span className={`pill ${bookUsable(book)?'green':'amber'}`}>{bookUsable(book)?'Active':'Review'}</span></button>)}</section>}
   </>;
 }
