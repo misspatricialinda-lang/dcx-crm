@@ -102,10 +102,10 @@ export async function conversationAiHandler(req, res, env = process.env, injecte
     const transcript = messages.map((message, index) => `[${index + 1}] ${message.sentDateTime || message.receivedDateTime || ''} From: ${message.from?.emailAddress?.address || 'unknown'} To: ${(message.toRecipients || []).map(item => item.emailAddress?.address).join(', ')} Subject: ${message.subject || ''}\n${String(message.body?.content || '').slice(0, 25000)}`).join('\n\n');
     const db = injected.db || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
     const transport = injected.fetch || fetch;
-    const memory = await retrieveEmailMemory(db, messages, mailbox);
     const embedding = await openai('embeddings', { model: env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small', input: transcript.slice(-10000) }, env, transport);
     const vector = embedding.data?.[0]?.embedding;
     if (!Array.isArray(vector) || vector.length !== 1536) throw new Error('Knowledge search embedding must have 1536 dimensions. Check OPENAI_EMBEDDING_MODEL.');
+    const memory = await retrieveEmailMemory(db, messages, mailbox, vector);
     const matches = await checked(db.rpc('match_documents', { query_embedding: vector, match_count: 6, filter: {} }));
     const knowledge = (matches || []).map((row, index) => ({ id: `K${index + 1}`, text: String(row.content || '').slice(0, 3000), similarity: row.similarity }));
     const attachmentNote = attachments.length ? attachments.map(item => `${item.name}: ${item.status}`).join('; ') : 'No non-inline attachments.';
@@ -113,7 +113,7 @@ export async function conversationAiHandler(req, res, env = process.env, injecte
     const response = await openai('responses', { model: env.OPENAI_CONVERSATION_MODEL || 'gpt-5.1', store: false, max_output_tokens: 1800, text: { format: { type: 'json_schema', name: 'conversation_analysis', strict: true, schema } }, instructions: CONVERSATION_AI_SYSTEM_PROMPT, input: [{ role: 'user', content: [{ type: 'input_text', text: `Connected mailbox: ${mailbox}\nLatest inbound message ID: ${latestInbound?.id || 'none'}\nConversation truncated: ${truncated}\nAttachment read status: ${attachmentNote}\n\nEmail chain (oldest first):\n${transcript.slice(-100000)}\n\nHistorical email memory (private evidence; attachment references are not file contents):\n${JSON.stringify(memory)}\n\nRelevant knowledge base passages:\n${knowledge.map(item => `[${item.id}] ${item.text}`).join('\n\n') || 'No matching passages.'}` }, ...inputs] }] }, env, transport);
     const analysis = JSON.parse(outputText(response));
     if (!analysis || typeof analysis.summary !== 'string' || typeof analysis.customer_request !== 'string' || !Array.isArray(analysis.next_steps) || typeof analysis.reply_needed !== 'boolean' || typeof analysis.draft_reply !== 'string' || !Array.isArray(analysis.uncertainties)) throw new Error('AI returned an incomplete conversation analysis.');
-    return respond(res, 200, { analysis, attachments, truncated, message_count: messages.length, knowledge_sources: knowledge.map(({ id, similarity }) => ({ id, similarity })), email_memory: { status: memory.status, matching_messages: memory.matching_messages || 0, sources: (memory.messages || []).map(({ source, id, occurred_at, subject }) => ({ source, id, occurred_at, subject })) }, reply_to_message_id: latestInbound?.id || null });
+    return respond(res, 200, { analysis, attachments, truncated, message_count: messages.length, knowledge_sources: knowledge.map(({ id, similarity }) => ({ id, similarity })), email_memory: { status: memory.status, retrieval: memory.retrieval, semantic_records: memory.semantic_records || 0, index_status: memory.index_status, matching_messages: memory.matching_messages || 0, sources: (memory.messages || []).map(({ source, id, occurred_at, subject }) => ({ source, id, occurred_at, subject })) }, reply_to_message_id: latestInbound?.id || null });
   } catch (error) {
     return respond(res, error.status || 502, { error: error.message || 'Conversation analysis failed.' });
   }

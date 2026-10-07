@@ -145,6 +145,8 @@ function Dashboard({
     update(d => ({ ...d, draft: d.draft?.bookId === saved.id ? { ...d.draft, bookVersion: saved.version } : d.draft }));
   }
   async function createPricing(name: string, sheet: QuoteDraft) {
+    if(!name.trim()||name.trim().length>120)throw new Error("Enter an agreement name up to 120 characters.");
+    if(data.books.some(b=>b.name.trim().toLowerCase()===name.trim().toLowerCase()))throw new Error("An agreement with this name already exists.");
     const source=data.books.find(b=>b.id===sheet.bookId);if(!source)throw new Error('Select an agreement first.');
     if(!calculateCost(sheet).valid)throw new Error('Correct the worksheet before creating an agreement.');
     const saved=await saveRates({...source,id:`agreement-${crypto.randomUUID()}`,name:name.trim(),version:1,status:'Draft',taxPercent:sheet.taxPercent,items:sheet.lines.map(({rateItemId,quantity:_quantity,...line})=>({...line,id:rateItemId}))});

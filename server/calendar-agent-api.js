@@ -40,8 +40,10 @@ export async function calendarAgentHandler(req, res, env = process.env, injected
   if (typeof message !== 'string' || !message.trim() || message.length > 4000 || typeof sessionId !== 'string' || !/^[a-zA-Z0-9-]{8,100}$/.test(sessionId)) return send(res, 400, { error: 'Invalid message or session.' });
   const webhook = n8nConfig(env).calendarWebhook;
   if (!webhook) return send(res, 503, { error: 'Calendar Agent webhook is not configured.' });
+  const config = n8nConfig(env);
+  if (!config.crmWebhookSecret) return send(res, 503, { error: 'Calendar Agent authentication is not configured.' });
   try {
-    const upstream = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sendMessage', chatInput: message.trim(), sessionId }), signal: AbortSignal.timeout(90000) });
+    const upstream = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json', [config.crmSecretHeader]: config.crmWebhookSecret }, body: JSON.stringify({ action: 'sendMessage', chatInput: message.trim(), sessionId }), signal: AbortSignal.timeout(90000) });
     const raw = await upstream.text();
     if (!upstream.ok) return send(res, 502, { error: 'Calendar Agent is unavailable. Check that the n8n workflow is active.' });
     const answer = parseCalendarResponse(raw);

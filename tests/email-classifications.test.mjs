@@ -1,0 +1,58 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {PGlite} from '@electric-sql/pglite';import {readFile,readdir} from 'node:fs/promises';
+test('approved classifications replace legacy categories without inventing unknown identities',async t=>{
+ const pg=new PGlite();t.after(()=>pg.close());await pg.exec('create role anon;create role authenticated;create role service_role;');
+ for(const f of (await readdir('supabase/migrations')).filter(f=>f.endsWith('.sql')&&!f.includes('knowledge_foundation')&&f<'202610050001').sort())await pg.exec(await readFile('supabase/migrations/'+f,'utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060001_email_classifications.sql','utf8'));
+ const purpose=async text=>(await pg.query('select crm_email_purpose($1) p',[text])).rows[0].p;
+ assert.equal(await purpose('What time are you available for a call?'),'meeting');
+ assert.equal(await purpose('Our UPS is not working'),'support');assert.equal(await purpose('Please upgrade the system'),'upgrade');
+ assert.equal(await purpose('Please provide pricing'),'quotation');assert.equal(await purpose('Invoice payment'),'billing');
+ assert.equal(await purpose('Interested in battery backup'),'incomplete_inquiry');assert.equal(await purpose('Happy birthday'),null);
+ assert.equal((await pg.query("select crm_correspondent_role('employee@dcx-tech.com') p")).rows[0].p,'employee');
+ assert.equal((await pg.query("select crm_correspondent_role('unknown@example.com') p")).rows[0].p,null);
+ await assert.rejects(pg.query("insert into email_correspondent_roles(email,role) values('x@example.com','other')"),/check constraint/);
+ await pg.query("insert into email_correspondent_roles(email,role) values('x@example.com','wholesale_partner')");
+ assert.equal((await pg.query("select crm_correspondent_role('x@example.com') p")).rows[0].p,'wholesale_partner');
+ assert.equal((await pg.query('select crm_email_categories() p')).rows[0].p.total,0);
+});
+
+test('AI classifications preserve owner decisions, reject stale messages and keep unverified identities out of customer records',async t=>{
+ const pg=new PGlite();t.after(()=>pg.close());await pg.exec('create role anon;create role authenticated;create role service_role;');
+ for(const f of (await readdir('supabase/migrations')).filter(f=>f.endsWith('.sql')&&!f.includes('knowledge_foundation')&&f<'202610050001').sort())await pg.exec(await readFile('supabase/migrations/'+f,'utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060001_email_classifications.sql','utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060005_ai_email_classification.sql','utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060006_classification_context.sql','utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060007_independent_classification_review.sql','utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060008_preserve_known_lead_relationship.sql','utf8'));
+ await pg.exec(await readFile('supabase/migrations/202610060009_reuse_known_prospect_context.sql','utf8'));
+ const mb=(await pg.query("insert into email_mailboxes(provider,address) values('microsoft','owner@example.com') returning id")).rows[0].id;
+ const th=(await pg.query("insert into email_threads(mailbox_id,provider_thread_key,subject) values($1,'ai-test','Ask') returning id",[mb])).rows[0].id;
+ const insert=async(key,sender,date)=>(await pg.query("insert into email_messages(thread_id,mailbox_id,provider_key,provider_ref,direction,sender,to_addresses,subject,body_text,occurred_at) values($1,$2,$3,$3,'incoming',$4,'[\"owner@example.com\"]','Availability','Can we find a convenient time?', $5) returning id",[th,mb,key,sender,date])).rows[0].id;
+ const id=await insert('first','lead@example.com','2026-10-06T10:00:00Z');
+ const input=async msg=>(await pg.query('select crm_email_classification_input($1) x',[msg])).rows[0].x;
+ const result={purpose:'meeting',relationship:'lead',purpose_confidence:.95,relationship_confidence:.95,needs_review:false,reason:'Current message requests a meeting.'};
+ const save=async(msg,r=result)=>(await pg.query('select crm_save_email_classification($1,$2,$3::jsonb) x',[msg,(await input(msg)).fingerprint,JSON.stringify(r)])).rows[0].x;
+ assert.equal((await pg.query('select classification_state from email_threads where id=$1',[th])).rows[0].classification_state,'pending');
+ assert.equal((await save(id)).purpose,'meeting');
+ assert.equal((await pg.query('select topic_source from email_threads where id=$1',[th])).rows[0].topic_source,'ai');
+ assert.equal((await pg.query('select crm_ai_context($1) x',[th])).rows[0].x.classification.purpose,'meeting');
+ assert.equal((await pg.query("select crm_correspondent_role('lead@example.com') r")).rows[0].r,'lead');
+ const cats=(await pg.query('select crm_email_categories() x')).rows[0].x;assert.equal(cats.topics.meeting,1);assert.equal(cats.records[0].classification_state,'classified');
+ await pg.query("update email_threads set topic='support',topic_source='owner' where id=$1",[th]);
+ assert.equal((await save(id)).purpose,'support');
+ await pg.query("insert into email_correspondent_roles(email,role) values('lead@example.com','supplier')");
+ assert.equal((await save(id)).relationship,'supplier');
+ assert.equal((await save(id,{...result,purpose_confidence:.2})).needs_review,false); // Owner topic is still authoritative.
+ await assert.rejects(save(id,{...result,purpose:'spam'}),/Invalid purpose/);
+ await assert.rejects(pg.query('select crm_save_email_classification($1,$2,$3::jsonb)',[id,'stale',JSON.stringify(result)]),/Message changed/);
+ const recent=await insert('new','unknown@example.com','2026-10-07T10:00:00Z');await pg.query("update email_threads set topic_source='ai',topic=null where id=$1",[th]);
+ const unverified=await save(recent,{...result,relationship:'customer'});assert.equal(unverified.relationship,null);assert.equal(unverified.needs_review,true);
+ await save(id);assert.equal((await pg.query('select topic from email_threads where id=$1',[th])).rows[0].topic,'meeting');
+ const separated=await save(recent,{...result,relationship:null,needs_review:true,purpose_needs_review:false,relationship_needs_review:true});assert.equal(separated.purpose,'meeting');assert.equal(separated.relationship,null);assert.equal(separated.needs_review,true);
+ const prospect=await save(recent,{...result,purpose:'incomplete_inquiry',relationship:'lead',relationship_confidence:.7,purpose_needs_review:false,relationship_needs_review:false});assert.equal(prospect.relationship,'lead');assert.equal(prospect.needs_review,false);
+ await save(recent,{...result,purpose_confidence:.1});assert.equal((await pg.query('select topic from email_threads where id=$1',[th])).rows[0].topic,null);
+ assert.equal((await pg.query("select crm_verified_correspondent_role('worker@dcx-tech.com') r")).rows[0].r,'employee');
+ const internal=await insert('internal','worker@dcx-tech.com','2026-10-08T10:00:00Z');assert.equal((await save(internal,{...result,relationship:'lead'})).relationship,'employee');
+ const prospectId=await insert('prospect','new-prospect@example.com','2026-10-09T10:00:00Z');await save(prospectId,{...result,purpose:'quotation',relationship:'lead',relationship_confidence:.8});
+ const followupId=await insert('followup','new-prospect@example.com','2026-10-10T10:00:00Z');const followup=await save(followupId,{...result,relationship:null,relationship_confidence:0,needs_review:true,purpose_needs_review:false,relationship_needs_review:true});assert.equal(followup.relationship,'lead');assert.equal(followup.needs_review,false);
+});

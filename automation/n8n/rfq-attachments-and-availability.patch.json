@@ -1,0 +1,16 @@
+{
+  "workflowId": "dAr13OsWOV2pSZbi",
+  "name": "Workflow 1 - Track Outlook conversations and draft incoming replies",
+  "note": "Applied and published 2026-10-07 via n8n MCP (version 'Read RFQ attachments and offer real availability'). The live workflow holds the full node code and prompts.",
+  "attachments": {
+    "path": "Load Customer Context -> List Draft Attachments -> Pick Readable Files -> Has Files To Read? -> Download Draft Attachment -> Read Attachment (OpenAI gpt-5-mini, Gateway credits) -> Collect Attachment Notes -> Load Classification Input",
+    "limits": "20 files, 8 MB each, 20 MB total; pdf, doc(x), rtf, odt, txt, csv, xls(x), ppt(x) and png/jpg/gif/webp images. Inline images skipped; other types listed as not read.",
+    "uses": "Notes go to Classify Incoming Email (attachments field) and to Draft Reply (ATTACHMENTS section). Unread or conflicting files are named in the reply."
+  },
+  "availability": {
+    "path": "Load Email Brain -> Get Calendar Availability (Outlook events, same 'Microsoft Outlook account' as Calendar Assistant v3) -> Compute Free Times -> Format Customer Context",
+    "rules": "Mon-Fri 9:00-17:00 America/Toronto, next 10 business days, slots >= 30 min starting >= 2 h from now; events marked free/workingElsewhere or cancelled are ignored. Only free windows reach the AI.",
+    "drafting": "Times are offered only when the sender asks about meeting/call/visit/availability; a proposed time is checked; bookings are never claimed."
+  },
+  "verification": "Temporary workflows (archived) confirmed DOCX extraction, unsupported-file reporting, calendar read and free-time output, and draft behaviour for a busy proposed time and conflicting RFQ/BOM quantities. Direct OpenAI tests confirmed PDF, XLSX and DOCX file inputs."
+}

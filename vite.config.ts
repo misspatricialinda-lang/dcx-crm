@@ -8,6 +8,7 @@ import { microsoftOAuthHandler } from './server/microsoft-oauth.js';
 import { calendarAgentHandler } from './server/calendar-agent-api.js';
 import { emailAssistantHandler } from './server/email-assistant-api.js';
 import { notificationsHandler } from './server/notifications-api.js';
+import { followupsHandler } from './server/followups-api.js';
 import { featureRequestsHandler } from './server/feature-requests-api.js';
 import { conversationAiHandler } from './server/conversation-ai-api.js';
 
@@ -19,6 +20,7 @@ export default defineConfig(({ mode }) => ({
       const env = loadEnv(mode, process.cwd(), '');
       server.middlewares.use('/api/conversation-ai', (req, res) => { conversationAiHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"Conversation analysis is unavailable."}'); }); });
       server.middlewares.use('/api/feature-requests', (req, res) => { featureRequestsHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"Feature requests are unavailable."}'); }); });
+      server.middlewares.use('/api/followups', (req, res) => { followupsHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"Follow-ups are unavailable."}'); }); });
       server.middlewares.use('/api/notifications', (req, res) => { notificationsHandler(req, res, env).catch(() => { res.statusCode = 500; res.end('{"error":"Notifications are unavailable."}'); }); });
       server.middlewares.use('/api/email-assistant', (req, res) => { emailAssistantHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"AI email request failed."}'); }); });
       server.middlewares.use('/api/calendar-agent', (req, res) => { calendarAgentHandler(req, res, env).catch(() => { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end('{"error":"Calendar Agent request failed."}'); }); });

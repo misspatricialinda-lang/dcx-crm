@@ -1,6 +1,5 @@
 import { TrackingOverview } from './TrackingOverview';
 import { EmailReport } from './EmailReport';
-import { CorrespondentActivity } from './CorrespondentActivity';
 import { EmailBrainPanel } from './EmailBrainPanel';
 import { SHOW_RATES } from '../../lib/features';
 import { MailConnectionCard } from './MailConnection';
@@ -20,7 +19,7 @@ export function Overview({ data, navigate, onQuote, preview }: { preview: boolea
       <button className="metric-card" onClick={()=>navigate('customers')}><span>Customers</span><strong>{data.customers.length}</strong></button>
       <button className="metric-card" onClick={()=>navigate('calculator')}><span>Quotes in progress</span><strong>{data.quotes.filter(q=>q.status!=='Approved').length}</strong></button>
       <button className="metric-card" onClick={()=>navigate('customers')}><span>Approved quotes</span><strong>{data.quotes.filter(q=>q.status==='Approved').length}</strong></button>
-    </div> : <EmailReport />}
+    </div> : null}
     <div className="overview-actions">
       <button onClick={()=>navigate('calculator')}><FileSpreadsheet size={28}/><strong>Cost calculation</strong><span>Open the cost worksheet</span><ArrowRight size={18}/></button>
       <button onClick={()=>navigate('calendar-agent')}><CalendarDays size={28}/><strong>My Calendar Agent</strong><span>Ask about meetings and availability</span><ArrowRight size={18}/></button>
@@ -31,10 +30,6 @@ export function Overview({ data, navigate, onQuote, preview }: { preview: boolea
     <div className="dashboard-panels">
       {preview ? <section className="panel"><div className="panel-heading"><h2>Email activity</h2><button className="text-button" onClick={()=>navigate('inbox')}>Open inbox <ArrowRight size={14}/></button></div>{pending.slice(0,4).map(m=><button className="book-summary" key={m.id} onClick={()=>navigate('inbox',m.id)}><span><strong>{m.from}</strong><small>{m.subject}</small></span></button>)}{!pending.length&&<p className="small muted">No messages need review.</p>}</section> : <TrackingOverview navigate={navigate}/>}
       <section className="panel quotation-panel"><div className="panel-heading"><h2>Earlier calculator quotes</h2><button className="text-button" onClick={()=>navigate('customers')}>View customers <ArrowRight size={14}/></button></div><div className="pipeline-total"><strong>{data.quotes.length}</strong><span>saved in this browser</span></div><div className="pipeline-bar">{data.quotes.length ? stages.map((stage,index)=><span key={stage} className={`segment-${index}`} style={{width:`${data.quotes.filter(q=>q.status===stage).length/data.quotes.length*100}%`}}/>) : <span className="empty-segment"/>}</div>{stages.map((stage,index)=><div className="pipeline-row" key={stage}><span><i className={`stage-dot dot-${index}`}/>{stage}</span><strong>{data.quotes.filter(q=>q.status===stage).length}</strong></div>)}<button className="secondary full pipeline-action" onClick={onQuote}>Start a new quotation <ArrowRight size={14}/></button></section>
-    </div>
-    <div className="dashboard-lower-panels">
-      {!preview && <CorrespondentActivity navigate={navigate}/>}
-      <section className="panel activity-panel"><div className="panel-heading"><h2><Activity size={16}/> Recent workspace activity</h2></div>{data.activity.slice(0,6).map(a=><div className="activity-row" key={a.id}><span className="activity-point"/><p>{a.text}</p><time>{new Date(a.at).toLocaleDateString('en-CA')}</time></div>)}{!data.activity.length&&<p className="small muted">No workspace activity yet.</p>}</section>
     </div>
     {SHOW_RATES && <section className="panel dashboard-rate-panel"><div className="panel-heading"><h2>Your rate books</h2><button className="text-button" onClick={()=>navigate('pricing')}>Manage rates <ArrowRight size={14}/></button></div>{data.books.map(book=><button className="book-summary" key={book.id} onClick={()=>navigate('pricing')}><span><strong>{book.name}</strong><small>Version {book.version} ? {book.items.length} rates</small></span><span className={`pill ${bookUsable(book)?'green':'amber'}`}>{bookUsable(book)?'Active':'Review'}</span></button>)}</section>}
   </>;

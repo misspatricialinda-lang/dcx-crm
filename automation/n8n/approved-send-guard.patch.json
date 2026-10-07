@@ -1,0 +1,17 @@
+{
+  "workflowId": "RgAjpIfQHy7Lg09I",
+  "operations": [
+    {
+      "type": "updateNodeParameters",
+      "nodeName": "Claim Draft for Send",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH claim AS (\n UPDATE email_drafts d SET status='sending', updated_at=now()\n WHERE d.id=$1::uuid AND d.thread_id=$2::uuid AND d.revision=$3::integer\n   AND d.deleted_at IS NULL AND d.status='approved' AND EXISTS (SELECT 1 FROM public.email_approvals a WHERE a.draft_id=d.id AND a.revision=d.revision AND a.approved_at>now()-interval '9 minutes' AND a.provider_review IS NOT NULL) AND EXISTS (SELECT 1 FROM public.email_draft_revisions approved_version WHERE approved_version.draft_id=d.id AND approved_version.revision=d.revision AND approved_version.body=d.current_body AND approved_version.to_addresses=d.to_addresses AND approved_version.subject=d.subject) AND EXISTS (SELECT 1 FROM public.email_threads current_thread WHERE current_thread.id=d.thread_id AND current_thread.message_version=d.source_message_version) AND nullif(trim(d.current_body),'') IS NOT NULL\n   AND EXISTS (\n     SELECT 1 FROM email_messages m\n     JOIN email_threads t ON t.id=d.thread_id\n     JOIN email_mailboxes mb ON mb.id=t.mailbox_id\n     WHERE m.id=d.reply_to_message_id AND m.thread_id=d.thread_id AND m.mailbox_id=t.mailbox_id\n       AND m.direction='incoming' AND nullif(m.provider_ref,'') IS NOT NULL\n       AND lower(m.sender) <> ALL(string_to_array($4,';'))\n       AND lower(d.to_addresses->>0) <> ALL(string_to_array($4,';'))\n       AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(m.to_addresses) recipient\n                   WHERE lower(recipient) = ANY(string_to_array($4,';')))\n       AND lower(mb.address)=lower($5)\n       AND jsonb_array_length(d.to_addresses)=1\n       AND lower(d.to_addresses->>0)=lower(m.sender)\n   )\n RETURNING d.*\n)\nSELECT claim.id AS draft_id, claim.thread_id, claim.revision, claim.current_body,\n claim.subject, claim.to_addresses, claim.reply_to_message_id,\n m.provider_ref AS reply_provider_ref, t.mailbox_id, t.provider_thread_key, mb.address AS mailbox_address\nFROM (SELECT 1) one LEFT JOIN claim ON true\nLEFT JOIN email_messages m ON m.id=claim.reply_to_message_id\nLEFT JOIN email_threads t ON t.id=claim.thread_id\nLEFT JOIN email_mailboxes mb ON mb.id=t.mailbox_id;",
+        "options": {
+          "queryReplacement": "={{ $('Validate Send Input').first().json.draft_id }}, {{ $('Validate Send Input').first().json.thread_id }}, {{ $('Validate Send Input').first().json.draft_revision }}, {{ $('Validate Send Input').first().json.own_addresses.join(';') }}, {{ $('Validate Send Input').first().json.mailbox_address }}"
+        }
+      },
+      "replace": true
+    }
+  ]
+}

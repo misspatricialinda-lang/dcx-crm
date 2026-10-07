@@ -1,0 +1,9 @@
+{
+  "workflowId": "dAr13OsWOV2pSZbi",
+  "name": "Workflow 1 - Track Outlook conversations and draft incoming replies",
+  "note": "Applied and published 2026-10-07 via n8n MCP (version 'Customer-ready drafts only; block internal notes'). Previously, when classification needed review, Draft Reply wrote an owner-review memo (CRM notes, classification, option list, quoted 'suggested reply') into the customer reply box. The live node holds the full prompt text.",
+  "changes": [
+    "Draft Reply system message: output only a send-ready email to the sender; never owner notes, CRM/classification/internal-system mentions or option lists; for vague emails reply naturally and ask 1-2 clarifying questions; match tone and sign-off of DCX's past replies in EMAIL BRAIN; never quote prices.",
+    "Build Draft Query: throws instead of saving when the draft matches /owner review|needs[_ ]review|crm notes|current saved classification|classification is|recommended next actions|suggested (customer )?reply|email brain|knowledge[_ ]base/i."
+  ]
+}

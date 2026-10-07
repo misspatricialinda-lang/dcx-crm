@@ -33,7 +33,9 @@ test('conversation AI reads the chain and supported attachments, retrieves knowl
     throw new Error(`Unexpected Graph path ${path}`);
   };
   const db = { rpc(name, params) {
-    if (name === 'crm_email_memory') {
+    if (name === 'crm_email_memory_hybrid') {
+      assert.equal(params.p_mailbox_address, 'owner@example.com');
+      assert.equal(params.p_embedding.length,1536);
       assert.deepEqual(params.p_addresses, ['customer@example.com']);
       return Promise.resolve({ data: { matching_messages: 1, messages: [{ source: 'pst', id: 'historical-1', occurred_at: '2026-03-01T10:00:00Z', subject: 'Old request', body_text: 'Six months ago we asked for battery service.' }] }, error: null });
     }

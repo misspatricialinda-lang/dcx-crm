@@ -36,7 +36,7 @@ export function validateRecord(entity, input) {
   if (entity === 'customers' && !output.price_book) output.price_book = 'standard';
   if (entity === 'customers') {
     output.relationship_type ||= 'customer';
-    if (!['customer','qualified_company','lead','supplier','other'].includes(output.relationship_type)) throw new Error('Select a valid relationship classification.');
+    if (!['employee','customer','lead','supplier','wholesale_partner'].includes(output.relationship_type)) throw new Error('Select a valid relationship classification.');
   }
   return output;
 }

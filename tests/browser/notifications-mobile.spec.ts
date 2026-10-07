@@ -20,7 +20,7 @@ test('phone navigation and notification feed fit a narrow screen', async ({ page
   await page.getByRole('button', { name: /Mark all read/ }).click();
   await expect(page.getByText('All caught up')).toBeVisible();
   await page.getByRole('button', { name: /Raza.*Quotation details/ }).click();
-  await expect(page.getByRole('navigation', { name: 'Email views' }).getByRole('button', { name: 'AI Draft Replies' })).toHaveAttribute('aria-current', 'page');
+  await expect(page).toHaveURL(/#inbox/);
   await page.getByRole('navigation', { name: 'Mobile navigation' }).getByRole('button', { name: 'More' }).click();
   await expect(page.getByRole('button', { name: 'Customers', exact: true })).toBeVisible();
 });

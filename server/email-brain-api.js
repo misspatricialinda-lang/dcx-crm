@@ -1,6 +1,6 @@
 const email=value=>typeof value==='string'&&value.length<=320&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-const roles=['customer','qualified_company','lead','supplier','other'];
-const topics=['pricing','quotation','order','service','technical','billing','meeting','other'];
+const roles=['employee','customer','lead','supplier','wholesale_partner'];
+const topics=['support','upgrade','quotation','billing','meeting','incomplete_inquiry'];
 const checked=async query=>{const {data,error}=await query;if(error)throw error;return data;};
 
 // Called inside crmHandler after owner authentication and origin verification.
@@ -19,7 +19,7 @@ export async function emailBrainRequest(db,req,url,input) {
     case 'role': {
       const address=String(input.email||'').trim().toLowerCase();
       if(!email(address)||!roles.includes(input.role)||String(input.company||'').length>200)throw new Error('Choose a valid email and classification.');
-      if(address.split('@')[1]==='dcx-tech.com')throw new Error('DCX domain addresses are classified as staff automatically.');
+      if(address.split('@')[1]==='dcx-tech.com')throw new Error('DCX domain addresses are classified as employees automatically.');
       await checked(db.from('email_correspondent_roles').upsert({email:address,role:input.role,company:String(input.company||'').trim(),updated_at:new Date().toISOString()}));break;
     }
     case 'topic': {

@@ -1,0 +1,43 @@
+[
+  {
+    "workflowId": "dAr13OsWOV2pSZbi",
+    "name": "Workflow 1 - Track Outlook conversations and draft incoming replies",
+    "note": "The Embeddings OpenAI node passes options.timeout straight to the OpenAI SDK, which reads it as MILLISECONDS (the n8n UI label says seconds). 120/180 aborted every request after 0.12/0.18 s. Applied and published 2026-10-07.",
+    "operations": [
+      {
+        "type": "setNodeParameter",
+        "nodeName": "Email history search embeddings",
+        "path": "/options/timeout",
+        "value": 30000
+      },
+      {
+        "type": "setNodeParameter",
+        "nodeName": "OpenAI Embeddings",
+        "path": "/options/timeout",
+        "value": 30000
+      },
+      {
+        "type": "setNodeSettings",
+        "nodeName": "Find historical email evidence",
+        "settings": {
+          "retryOnFail": true,
+          "maxTries": 2,
+          "waitBetweenTries": 2000,
+          "onError": "stopWorkflow"
+        }
+      }
+    ]
+  },
+  {
+    "workflowId": "lXxNYQSjtRw8uVRc",
+    "name": "Workflow 2 - Edit and regenerate owner email drafts",
+    "operations": [
+      {
+        "type": "setNodeParameter",
+        "nodeName": "Email history search embeddings",
+        "path": "/options/timeout",
+        "value": 30000
+      }
+    ]
+  }
+]

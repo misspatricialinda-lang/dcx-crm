@@ -3,6 +3,8 @@ import { configuration, getSession } from './auth-core.js';
 import { MailError, mailConfiguration, mailConfigured } from './microsoft-graph.js';
 import { delegatedGraphClient } from './microsoft-oauth.js';
 import { hostingerConfigured, hostingerConfiguration, hostingerMailHandler } from './hostinger-mail.js';
+import { createClient } from '@supabase/supabase-js';
+import { bannerAttachment, insertSignature, loadSignature, SIGNATURE_CID, textToHtml } from './email-signature.js';
 
 const fields = 'id,internetMessageId,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,lastModifiedDateTime,isRead,isDraft,importance,flag,hasAttachments,parentFolderId,webLink,changeKey';
 // Prevent parallel/repeated dispatch in one warm instance. Microsoft is still authoritative;
@@ -42,6 +44,24 @@ function recipients(value, optional = false) {
   if (!list.length || list.length > 20 || list.some(v => v.length > 320 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v))) throw new MailError(400, 'Enter valid email addresses separated by commas (up to 20).');
   return list.map(address => ({ emailAddress: { address } }));
 }
+// The company signature is added just before Microsoft sends, above any quoted history.
+async function companySignature(env) {
+  if (env.SIGNATURE_DB) return loadSignature(env.SIGNATURE_DB);
+  if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) return null;
+  return loadSignature(createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } }));
+}
+async function addSignature(graph, id, signature) {
+  const path = `/messages/${segment(id)}`;
+  const draft = await graph(`${path}?$select=id,changeKey,body`);
+  const html = draft.body?.contentType === 'html' ? draft.body.content : textToHtml(draft.body?.content);
+  const signed = insertSignature(html, signature.html);
+  if (signed !== html) await graph(path, { method: 'PATCH', etag: version(draft), body: { body: { contentType: 'HTML', content: signed } } });
+  const banner = bannerAttachment(signature);
+  if (!banner) return;
+  const existing = await graph(`${path}/attachments?$select=id,isInline,microsoft.graph.fileAttachment/contentId`);
+  if (!(existing.value || []).some(item => String(item.contentId || '').replace(/[<>]/g, '') === SIGNATURE_CID)) await graph(`${path}/attachments`, { method: 'POST', body: banner });
+}
+
 export async function microsoftMailHandler(req, res, env = process.env, injectedGraph) {
   res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
   if (!getSession(req, configuration(env))) return respond(res, 401, { error: 'Sign in with the configured workspace account to access Microsoft mail.' });
@@ -97,7 +117,7 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         const record = await graph(`/messages/${segment(url.searchParams.get('id'))}?$select=${fields},body,uniqueBody,replyTo`, { text: url.searchParams.get('text') === 'true' });
         return respond(res, 200, { record, version: version(record) });
       }
-      if (action === 'attachments') return respond(res, 200, await page(`/messages/${segment(url.searchParams.get('id'))}/attachments?$select=id,name,contentType,size,isInline&$top=50`));
+      if (action === 'attachments') return respond(res, 200, await page(`/messages/${segment(url.searchParams.get('id'))}/attachments?$select=id,name,contentType,size,isInline,microsoft.graph.fileAttachment/contentId&$top=50`));
       if (action === 'download') {
         const path = `/messages/${segment(url.searchParams.get('id'))}/attachments/${segment(url.searchParams.get('attachment'))}`;
         const metadata = await graph(path + '?$select=id,name,size');
@@ -178,6 +198,9 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         try {
           const record = await graph(`/messages/${segment(approved.id)}?$select=id,isDraft,changeKey`);
           if (!record.isDraft || version(record) !== approved.version) throw new MailError(409, 'This draft changed or was sent. Review its current version before sending.');
+          let signature;
+          try { signature = await companySignature(env); } catch { throw new MailError(503, 'The email signature could not be loaded. Nothing was sent; try again.'); }
+          if (signature) await addSignature(graph, approved.id, signature);
           requested = true;
           await graph(`/messages/${segment(approved.id)}/send`, { method: 'POST' });
         } catch (error) { if (!requested) dispatches.delete(key); throw error; }

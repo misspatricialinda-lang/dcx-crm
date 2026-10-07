@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { configuration, getSession } from './auth-core.js';
 import { n8nConfig } from './n8n-config.js';
+import { cleanSignatureFields, signatureHtml } from './email-signature.js';
+import { sendAiDraft } from './draft-send.js';
+import { delegatedGraphClient } from './microsoft-oauth.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
 const actionable = draft => draft && !draft.deleted_at && !['sent', 'sending', 'submitted', 'uncertain'].includes(draft.status) && !!draft.original_ai_body;
@@ -27,6 +30,12 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
   const db = injected.db || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const url = new URL(req.url || '/', 'http://localhost');
   try {
+    if(req.method==='GET' && url.searchParams.get('action')==='signature') {
+      const row=await checked(db.from('crm_email_signature').select('fields,enabled,banner_base64,banner_content_type,updated_at,updated_by').eq('id',1).maybeSingle());
+      if(!row)return reply(res,200,{signature:null});
+      const banner=row.banner_base64?`data:${row.banner_content_type};base64,${row.banner_base64}`:'';
+      return reply(res,200,{signature:{fields:row.fields,enabled:row.enabled,has_banner:!!banner,preview_html:signatureHtml(row.fields,{banner:!!banner,bannerSrc:banner}),updated_at:row.updated_at,updated_by:row.updated_by}});
+    }
     if(req.method==='GET' && url.searchParams.get('action')==='location') {
       const id=url.searchParams.get('id');if(!uuid(id))return reply(res,400,{error:'Invalid conversation.'});
       const thread=await checked(db.from('email_threads').select('id,provider_thread_key').eq('id',id).maybeSingle());
@@ -51,7 +60,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       const drafts = await checked(draftQuery.order('updated_at', { ascending: false }).limit(500));
       const current = drafts.filter(d => trash ? !!d.deleted_at : actionable(d)).filter((d,i,a)=>a.findIndex(other=>other.thread_id===d.thread_id)===i);
       if (!current.length) return reply(res, 200, { records: [] });
-      const threads = await checked(db.from('email_threads').select('id,subject,status,priority,customer_id,last_message_at,mailbox_id').in('id', current.map(d => d.thread_id)));
+      const threads = await checked(db.from('email_threads').select('id,subject,status,priority,customer_id,last_message_at,mailbox_id,provider_thread_key').in('id', current.map(d => d.thread_id)));
       const queueMessages = await checked(db.from('email_messages').select('thread_id,direction,sender,body_text,has_attachments,occurred_at').in('thread_id', current.map(d => d.thread_id)).order('occurred_at', { ascending: false }).limit(1000));
       const attached = new Set(queueMessages.filter(m => m.has_attachments).map(m => m.thread_id));
       const latestInbound = new Map();
@@ -83,6 +92,14 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     }
     if (req.method !== 'POST') return reply(res, 400, { error: 'Unknown AI reply request.' });
     const input = await bodyOf(req);
+    if (input?.action === 'signature') {
+      let fields;
+      try { fields = cleanSignatureFields(input.fields); } catch (error) { return reply(res, 400, { error: error.message }); }
+      const current = await checked(db.from('crm_email_signature').select('banner_base64').eq('id', 1).maybeSingle());
+      if (!current) return reply(res, 404, { error: 'No signature is set up yet. Run the signature seed first.' });
+      await checked(db.from('crm_email_signature').update({ fields, html: signatureHtml(fields, { banner: !!current.banner_base64 }), enabled: input.enabled !== false, updated_at: new Date().toISOString(), updated_by: session.email }).eq('id', 1));
+      return reply(res, 200, { success: true });
+    }
     if (['delete','restore'].includes(input?.action)) {
       if(!uuid(input.draft_id)||!Number.isFinite(Date.parse(input.updated_at))) return reply(res,400,{error:'Reload the draft before changing it.'});
       const result=await checked(db.rpc('crm_draft_trash',{p_id:input.draft_id,p_updated_at:input.updated_at,p_restore:input.action==='restore',p_actor:session.email}));
@@ -96,12 +113,19 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     if (input.action === 'send') {
       if (!Array.isArray(input.attachments) || input.attachments.length > 5 || input.attachments.some(file => !file || typeof file.name !== 'string' || !file.name.trim() || file.name.length > 200 || typeof file.content_type !== 'string' || typeof file.content_base64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.content_base64) || file.content_base64.length > 4 * 1024 * 1024) || input.attachments.reduce((size, file) => size + file.content_base64.length, 0) > 4 * 1024 * 1024) return reply(res, 400, { error: 'Attach up to five files, with a combined size under 3 MB.' });
     }
+    // Sending runs here through Microsoft Graph; n8n is used only to write and rewrite drafts.
+    if (input.action === 'send') {
+      if (typeof input.updated_at !== 'string' || !Number.isFinite(Date.parse(input.updated_at))) return reply(res, 400, { error: 'Reload the draft before sending.' });
+      const connected = injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await delegatedGraphClient(env);
+      if (!connected) return reply(res, 503, { error: 'Connect the Outlook mailbox before sending.' });
+      const result = await sendAiDraft({ db, graph: connected.graph, mailbox: connected.connection.email_address, draftId: draft.id, updatedAt: input.updated_at, attachments: input.attachments, actor: session.email });
+      return reply(res, result.status, result.body);
+    }
     const config = n8nConfig(env);
     if (!config.emailAssistantWebhook) return reply(res, 503, { error: 'AI email workflow URL is not configured.' });
     const payload = { action: input.action, thread_id: draft.thread_id, draft_id: draft.id, actor: session.email, request_id: uuid(input.request_id) ? input.request_id : crypto.randomUUID() };
     if (input.action === 'rewrite') payload.instruction = input.instruction.trim();
     if (input.action === 'save') { payload.body_text = input.body_text; payload.body_html = typeof input.body_html === 'string' ? input.body_html.slice(0, 100000) : ''; }
-    if (input.action === 'send') payload.attachments = input.attachments;
     const upstream = await (injected.fetch || fetch)(config.emailAssistantWebhook, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(config.crmWebhookSecret ? { [config.crmSecretHeader]: config.crmWebhookSecret } : {}) }, body: JSON.stringify(payload), signal: AbortSignal.timeout(90000) });
     const raw = await upstream.text();
     let result;

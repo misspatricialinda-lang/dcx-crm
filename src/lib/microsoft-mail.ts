@@ -39,6 +39,7 @@ export interface MailAttachment {
   size: number;
   isInline: boolean;
   contentType: string;
+  contentId?: string | null;
 }
 export interface Page<T> {
   records: T[];

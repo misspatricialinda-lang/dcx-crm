@@ -1,0 +1,10 @@
+{
+  "applied": "2026-10-07",
+  "summary": "AI-draft sending moved from Workflow 3 into the app (server/draft-send.js). Drafts no longer write a name or team sign-off; the app appends Raza's signature at send time.",
+  "workflows": {
+    "dAr13OsWOV2pSZbi": "Draft Reply system message: 'Match the tone, length and structure' (sign-off removed) and new output rule: end with a closing line such as \"Thank you,\" and nothing after it; the signature is added automatically. Published.",
+    "lXxNYQSjtRw8uVRc": "AI Rewrite Draft and AI Regenerate Reply: 'Sign off as the DCX team' replaced with the same closing-line rule (rewrite also removes an existing name sign-off). Published. The 'send' route and Call Send Workflow node are now unused because the app handles send itself.",
+    "RgAjpIfQHy7Lg09I": "Not changed. No longer called. Unpublish after the first confirmed app send."
+  },
+  "why_workflow_3_failed": "Live Claim Draft for Send required status='approved', an email_approvals row from the last 9 minutes with provider_review, and email_threads.message_version = draft.source_message_version. The inline AI draft never creates the approval and message_version drifts, so every claim returned no row."
+}

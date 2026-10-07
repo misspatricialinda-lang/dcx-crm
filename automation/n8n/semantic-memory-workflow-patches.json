@@ -1,0 +1,322 @@
+[
+  {
+    "workflowId": "lrktCABRGu93BBXD",
+    "name": "Workflow 1 - Track Outlook conversations and draft incoming replies",
+    "operations": [
+      {
+        "type": "addNode",
+        "node": {
+          "name": "Email memory search input",
+          "type": "n8n-nodes-base.postgres",
+          "typeVersion": 2.7,
+          "position": [
+            3500,
+            2400
+          ],
+          "credentials": {
+            "postgres": {
+              "id": "ddSGCZFM8FCex3f8",
+              "name": "Postgres account"
+            }
+          },
+          "parameters": {
+            "operation": "executeQuery",
+            "query": "SELECT m.thread_id,m.mailbox_id,lower(m.sender) AS address,left(m.subject||' '||CASE WHEN m.body_html<>'' THEN regexp_replace(m.body_html,'<[^>]*>',' ','g') ELSE m.body_text END,1500) AS query FROM public.email_messages m WHERE m.thread_id=$1::uuid AND m.direction='incoming' ORDER BY m.occurred_at DESC,m.id DESC LIMIT 1;",
+            "options": {
+              "queryReplacement": "={{ [$('Persist Incoming Email').first().json.thread_id] }}"
+            }
+          }
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "name": "Find historical email evidence",
+          "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+          "typeVersion": 1.3,
+          "position": [
+            3720,
+            2400
+          ],
+          "credentials": {
+            "supabaseApi": {
+              "id": "UWlDdtOOI61vsKM8",
+              "name": "Supabase account"
+            }
+          },
+          "parameters": {
+            "mode": "load",
+            "tableName": {
+              "__rl": true,
+              "mode": "id",
+              "value": "crm_email_vectors"
+            },
+            "prompt": "={{ $json.query }}",
+            "topK": 8,
+            "includeDocumentMetadata": true,
+            "options": {
+              "queryName": "match_email_memory_chunks",
+              "metadata": {
+                "metadataValues": [
+                  {
+                    "name": "address",
+                    "value": "={{ $json.address }}"
+                  },
+                  {
+                    "name": "mailbox_id",
+                    "value": "={{ $json.mailbox_id }}"
+                  },
+                  {
+                    "name": "query",
+                    "value": "={{ $json.query }}"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "name": "Email history search embeddings",
+          "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+          "typeVersion": 1.2,
+          "position": [
+            3720,
+            2610
+          ],
+          "parameters": {
+            "model": "text-embedding-3-small",
+            "options": {
+              "dimensions": 1536,
+              "timeout": 30000
+            }
+          }
+        }
+      },
+      {
+        "type": "addConnection",
+        "source": "Email memory search input",
+        "target": "Find historical email evidence"
+      },
+      {
+        "type": "addConnection",
+        "source": "Find historical email evidence",
+        "target": "Load Email Brain"
+      },
+      {
+        "type": "addConnection",
+        "source": "Email history search embeddings",
+        "target": "Find historical email evidence",
+        "connectionType": "ai_embedding"
+      },
+      {
+        "type": "setNodeSettings",
+        "nodeName": "Find historical email evidence",
+        "settings": {
+          "alwaysOutputData": true
+        }
+      },
+      {
+        "type": "setNodeSettings",
+        "nodeName": "Load Email Brain",
+        "settings": {
+          "executeOnce": true
+        }
+      },
+      {
+        "type": "updateNodeParameters",
+        "nodeName": "Load Email Brain",
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT public.crm_ai_context_hybrid($1::uuid,$2::jsonb) AS email_brain;",
+          "options": {
+            "queryReplacement": "={{ [ $('Email memory search input').first().json.thread_id, JSON.stringify($('Find historical email evidence').all().map(i => i.json.document?.metadata || i.json.metadata || {})) ] }}"
+          }
+        }
+      },
+      {
+        "type": "removeConnection",
+        "source": "Load Customer Context",
+        "target": "Load Email Brain",
+        "sourceIndex": 0,
+        "targetIndex": 0
+      },
+      {
+        "type": "addConnection",
+        "source": "Load Customer Context",
+        "target": "Email memory search input",
+        "sourceIndex": 0,
+        "targetIndex": 0
+      }
+    ]
+  },
+  {
+    "workflowId": "rWKsBzLw1BCjXugn",
+    "name": "Workflow 2 - Edit and regenerate owner email drafts",
+    "operations": [
+      {
+        "type": "addNode",
+        "node": {
+          "name": "Email memory search input",
+          "type": "n8n-nodes-base.postgres",
+          "typeVersion": 2.7,
+          "position": [
+            3500,
+            2400
+          ],
+          "credentials": {
+            "postgres": {
+              "id": "ddSGCZFM8FCex3f8",
+              "name": "Postgres account"
+            }
+          },
+          "parameters": {
+            "operation": "executeQuery",
+            "query": "SELECT m.thread_id,m.mailbox_id,lower(m.sender) AS address,left(m.subject||' '||CASE WHEN m.body_html<>'' THEN regexp_replace(m.body_html,'<[^>]*>',' ','g') ELSE m.body_text END,1500) AS query FROM public.email_messages m WHERE m.thread_id=$1::uuid AND m.direction='incoming' ORDER BY m.occurred_at DESC,m.id DESC LIMIT 1;",
+            "options": {
+              "queryReplacement": "={{ [$('Validate Request').first().json.thread_id] }}"
+            }
+          }
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "name": "Find historical email evidence",
+          "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+          "typeVersion": 1.3,
+          "position": [
+            3720,
+            2400
+          ],
+          "credentials": {
+            "supabaseApi": {
+              "id": "UWlDdtOOI61vsKM8",
+              "name": "Supabase account"
+            }
+          },
+          "parameters": {
+            "mode": "load",
+            "tableName": {
+              "__rl": true,
+              "mode": "id",
+              "value": "crm_email_vectors"
+            },
+            "prompt": "={{ $json.query }}",
+            "topK": 8,
+            "includeDocumentMetadata": true,
+            "options": {
+              "queryName": "match_email_memory_chunks",
+              "metadata": {
+                "metadataValues": [
+                  {
+                    "name": "address",
+                    "value": "={{ $json.address }}"
+                  },
+                  {
+                    "name": "mailbox_id",
+                    "value": "={{ $json.mailbox_id }}"
+                  },
+                  {
+                    "name": "query",
+                    "value": "={{ $json.query }}"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "name": "Email history search embeddings",
+          "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+          "typeVersion": 1.2,
+          "position": [
+            3720,
+            2610
+          ],
+          "parameters": {
+            "model": "text-embedding-3-small",
+            "options": {
+              "dimensions": 1536,
+              "timeout": 30000
+            }
+          }
+        }
+      },
+      {
+        "type": "addConnection",
+        "source": "Email memory search input",
+        "target": "Find historical email evidence"
+      },
+      {
+        "type": "addConnection",
+        "source": "Find historical email evidence",
+        "target": "Load Email Brain"
+      },
+      {
+        "type": "addConnection",
+        "source": "Email history search embeddings",
+        "target": "Find historical email evidence",
+        "connectionType": "ai_embedding"
+      },
+      {
+        "type": "setNodeSettings",
+        "nodeName": "Find historical email evidence",
+        "settings": {
+          "alwaysOutputData": true
+        }
+      },
+      {
+        "type": "setNodeSettings",
+        "nodeName": "Load Email Brain",
+        "settings": {
+          "executeOnce": true
+        }
+      },
+      {
+        "type": "updateNodeParameters",
+        "nodeName": "Load Email Brain",
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT public.crm_ai_context_hybrid($1::uuid,$2::jsonb) AS email_brain;",
+          "options": {
+            "queryReplacement": "={{ [ $('Email memory search input').first().json.thread_id, JSON.stringify($('Find historical email evidence').all().map(i => i.json.document?.metadata || i.json.metadata || {})) ] }}"
+          }
+        }
+      },
+      {
+        "type": "removeConnection",
+        "source": "Has Customer",
+        "target": "Load Email Brain",
+        "sourceIndex": 1,
+        "targetIndex": 0
+      },
+      {
+        "type": "addConnection",
+        "source": "Has Customer",
+        "target": "Email memory search input",
+        "sourceIndex": 1,
+        "targetIndex": 0
+      },
+      {
+        "type": "removeConnection",
+        "source": "Load Customer",
+        "target": "Load Email Brain",
+        "sourceIndex": 0,
+        "targetIndex": 0
+      },
+      {
+        "type": "addConnection",
+        "source": "Load Customer",
+        "target": "Email memory search input",
+        "sourceIndex": 0,
+        "targetIndex": 0
+      }
+    ]
+  }
+]
