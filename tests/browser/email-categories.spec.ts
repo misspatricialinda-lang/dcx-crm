@@ -33,9 +33,10 @@ test('email activity filters by chips, summary cards and date range',async({page
   await expect(panel.getByLabel('Classify alex@dcx-tech.com')).toBeDisabled();
   await expect(purpose.getByRole('button',{name:'quotation 0'})).toBeVisible();
 
-  // Summary card switches to that category only, and All conversations returns everything.
-  await panel.getByRole('button',{name:/Quotation requests/}).click();
-  await expect(panel.getByRole('button',{name:/Quotation requests/})).toHaveAttribute('aria-pressed','true');
+  // The Quotation purpose filter shows that category only, and All conversations returns everything.
+  await expect(panel.getByRole('button',{name:/Quotation requests|Meeting requests/})).toHaveCount(0);
+  await panel.getByRole('button',{name:'All conversations',exact:true}).click();
+  await purpose.getByRole('button',{name:/^quotation /}).click();
   await expect(listed('des@example.com')).toBeVisible();
   await expect(listed('alex@dcx-tech.com')).toHaveCount(0);
   await panel.getByRole('button',{name:'All conversations',exact:true}).click();

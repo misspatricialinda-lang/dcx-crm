@@ -328,3 +328,6 @@
 .followup-rules label small{display:block;color:#7c8b94;font-size:11px;margin-top:3px}
 .followup-rules .button-row{display:flex;gap:10px}
 @media(max-width:640px){.followup-bar select{flex:1}}
+
+/* Email activity overview: two cards (all conversations, needs classification review). */
+.email-summary{grid-template-columns:repeat(2,minmax(0,1fr))}

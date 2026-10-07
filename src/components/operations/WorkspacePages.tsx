@@ -9,21 +9,8 @@ import { bookUsable, money } from '../../lib/costing';
 import { downloadJson } from '../../lib/workspace';
 
 export function Overview({ data, navigate, onQuote, preview }: { preview: boolean; data: Workspace; navigate: (tab: string, id?: string) => void; onQuote: () => void }) {
-  const pending = data.emails.filter(m => m.status === 'Needs review');
   return <>
-    <div className="page-heading dashboard-heading"><h1>Dashboard</h1><button className="primary" onClick={onQuote}><Plus size={16}/> New quotation</button></div>
-    {preview ? <div className="metric-grid dashboard-preview-metrics">
-      <button className="metric-card" onClick={()=>navigate('inbox')}><span>Emails to review</span><strong>{pending.length}</strong></button>
-      <button className="metric-card" onClick={()=>navigate('customers')}><span>Customers</span><strong>{data.customers.length}</strong></button>
-      <button className="metric-card" onClick={()=>navigate('calculator')}><span>Quotes in progress</span><strong>{data.quotes.filter(q=>q.status!=='Approved').length}</strong></button>
-      <button className="metric-card" onClick={()=>navigate('customers')}><span>Approved quotes</span><strong>{data.quotes.filter(q=>q.status==='Approved').length}</strong></button>
-    </div> : null}
-    <div className="overview-actions">
-      <button onClick={()=>navigate('calculator')}><FileSpreadsheet size={28}/><strong>Cost calculation</strong><span>Open the cost worksheet</span><ArrowRight size={18}/></button>
-      <button onClick={()=>navigate('calendar-agent')}><CalendarDays size={28}/><strong>My Calendar Agent</strong><span>Ask about meetings and availability</span><ArrowRight size={18}/></button>
-      <button onClick={()=>navigate('customers','new')}><Users size={28}/><strong>Add new customer</strong><span>Create a customer record</span><ArrowRight size={18}/></button>
-      <button onClick={()=>navigate('quotations')}><FileText size={28}/><strong>Create a quotation</strong><span>Choose a customer to begin</span><ArrowRight size={18}/></button>
-    </div>
+    <div className="page-heading dashboard-heading"><h1>Dashboard</h1></div>
     {!preview && <EmailBrainPanel navigate={navigate}/>}
     {SHOW_RATES && <section className="panel dashboard-rate-panel"><div className="panel-heading"><h2>Your rate books</h2><button className="text-button" onClick={()=>navigate('pricing')}>Manage rates <ArrowRight size={14}/></button></div>{data.books.map(book=><button className="book-summary" key={book.id} onClick={()=>navigate('pricing')}><span><strong>{book.name}</strong><small>Version {book.version} ? {book.items.length} rates</small></span><span className={`pill ${bookUsable(book)?'green':'amber'}`}>{bookUsable(book)?'Active':'Review'}</span></button>)}</section>}
   </>;

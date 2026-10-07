@@ -7,6 +7,7 @@ test('dashboard has no email-activity or calculator-quote panels and no floating
   await expect(page.getByText('Earlier calculator quotes')).toHaveCount(0);
   await expect(page.getByText('Follow-ups due')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open Calendar Agent' })).toHaveCount(0);
+  for (const shortcut of ['New quotation', 'Cost calculation', 'My Calendar Agent', 'Add new customer', 'Create a quotation']) await expect(page.getByRole('main').getByText(shortcut, { exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'tmp/browser-results/dashboard-clean.png', fullPage: true });
   // The Calendar Agent is still reachable from the menu.
   await page.getByRole('button', { name: 'Calendar Agent', exact: true }).first().click();
