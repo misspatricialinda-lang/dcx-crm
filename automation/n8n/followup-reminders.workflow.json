@@ -2,16 +2,11 @@
   "created": "2026-10-07",
   "workflowId": "ApCCfjtiqteeOLrM",
   "name": "Follow-up reminders - 9 AM",
-  "status": "URL set to https://dcx-crm.vercel.app; unpublished until the follow-ups code is deployed there",
+  "status": "Published 7 Oct 2026; manual test execution 58 reached https://dcx-crm.vercel.app and returned {due:0} (shared secret accepted)",
   "nodes": {
     "Weekdays 9 AM Toronto": "Schedule Trigger, cron 0 9 * * 1-5, workflow timezone America/Toronto",
     "Run CRM follow-up check": "HTTP POST https://dcx-crm.vercel.app/api/followups?action=run, body {}, Header Auth account credential (SSeKMO2OtH8E8rtL, x-webhook-secret), timeout 120 s, 3 tries",
     "More follow-ups due?": "If due >= 4 and fewer than 10 rounds, call the CRM again"
   },
-  "crm_side": "server/followups-api.js accepts run only from a signed-in owner or with the n8n shared secret; each call handles up to 4 follow-ups and returns { due, drafted, notified, skipped, errors }.",
-  "to_finish": [
-    "Deploy today's CRM code to dcx-crm.vercel.app (and apply nothing else: migrations are already live)",
-    "Publish the workflow",
-    "Run it once manually and check the execution output"
-  ]
+  "crm_side": "server/followups-api.js accepts run only from a signed-in owner or with the n8n shared secret; each call handles up to 4 follow-ups and returns { due, drafted, notified, skipped, errors }."
 }
