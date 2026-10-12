@@ -39,7 +39,7 @@ import {
   type MicrosoftMessage,
   type Page,
 } from "../../lib/microsoft-mail";
-import { useMailConnection, MailConnectionCard } from "./MailConnection";
+import { useMailConnection, MailConnectionCard, MailAccountMenu } from "./MailConnection";
 import { crmRequest } from '../../lib/crm-client';
 import { buildCustomerQuotationPdf, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
 import type { MailProviderName } from "./MailConnection";
@@ -602,10 +602,7 @@ function MicrosoftInbox({
       </div>
       <div className={`outlook-shell${phoneReading && openId ? ' phone-reading' : ''}`}>
         <aside className="mail-folders">
-          <div className="mail-account">
-            <strong>{mailbox}</strong>
-            <ChevronDown size={14} />
-          </div>
+          <MailAccountMenu mailbox={mailbox} provider={provider} />
           <button
             className="primary full folder-compose"
             onClick={() => {

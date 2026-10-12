@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { mailRequest } from '../../lib/microsoft-mail';
+import { ChevronDown, LogOut, Plus } from 'lucide-react';
 
 export type MailProviderName = 'microsoft' | 'hostinger';
 type Connection = { mode: 'loading' | 'preview' | 'live' | 'error'; mailbox?: string; inboxId?: string; provider?: MailProviderName; error?: string; check: () => void };
@@ -46,4 +47,40 @@ export function MailConnectionCard() {
     {connection.error && <p role="alert" className="form-error">{connection.error}</p>}
     <button className="secondary" disabled={connection.mode === 'loading'} onClick={connection.check}>Check connection</button><p className="field-help">Tracked conversations appear after mailbox sync.</p>
   </section>;
+}
+
+// The mailbox name at the top of the folder list: disconnect it, or connect a different one.
+export function MailAccountMenu({ mailbox, provider }: { mailbox: string; provider?: MailProviderName }) {
+  const connection = useMailConnection();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const menu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => { if (!menu.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  async function disconnect() {
+    if (!window.confirm(`Disconnect ${mailbox}? The CRM stops reading and sending this mailbox's email until you connect a mailbox again. Saved conversations and drafts are kept.`)) return;
+    setBusy(true); setError('');
+    try {
+      const status = await fetch('/api/microsoft-oauth?action=status', { credentials: 'same-origin', cache: 'no-store' }).then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Unable to load Microsoft connections.'); return data; });
+      const current = (status.connections as { id: string; email_address: string; is_active: boolean }[]).find(item => item.is_active) || status.connections.find((item: { email_address: string }) => item.email_address.toLowerCase() === mailbox.toLowerCase());
+      if (!current) throw new Error('This mailbox is not connected through Microsoft sign-in.');
+      const response = await fetch('/api/microsoft-oauth?action=disconnect', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: current.id }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to disconnect this mailbox.');
+      setOpen(false); connection.check();
+    } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
+  }
+  if (provider === 'hostinger') return <div className="mail-account"><strong>{mailbox}</strong></div>;
+  return <div className="mail-account" ref={menu}>
+    <button type="button" className="mail-account-toggle" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}><strong>{mailbox}</strong><ChevronDown size={14} /></button>
+    {open && <div className="mail-account-menu" role="menu">
+      <a role="menuitem" href="/api/microsoft-oauth?action=start"><Plus size={14} /> Connect another mailbox</a>
+      <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => void disconnect()}><LogOut size={14} /> {busy ? 'Disconnecting…' : 'Disconnect this mailbox'}</button>
+      {error && <p role="alert" className="form-error">{error}</p>}
+    </div>}
+  </div>;
 }
