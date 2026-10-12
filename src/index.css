@@ -302,11 +302,25 @@
 .attachment-preview-image img{max-width:100%;height:auto}
 @media(max-width:640px){.modal-backdrop:has(.attachment-preview){padding:0}.attachment-preview{height:100dvh;border-radius:0}}
 .modal-backdrop:has(.attachment-preview){z-index:90}
-.signature-preview{border:1px dashed #d6e0e4;border-radius:6px;padding:8px 12px;background:#fbfcfc}
-.signature-preview-head{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#6b7c73}
-.signature-preview-head .text-button{display:inline-flex;align-items:center;gap:4px;font-size:12px}
-.signature-preview-body{margin-top:6px;opacity:.85;pointer-events:none;overflow:hidden}
-.signature-preview-body img{max-width:100%!important;height:auto!important}
+/* Message and signature share one writing area, like Gmail. */
+.reply-canvas{border:1px solid #d6e0e4;border-radius:6px;padding:12px;background:#fff;cursor:text}
+.reply-canvas:focus-within{outline:2px solid #bfe2d6;border-color:var(--teal)}
+.inline-ai-reply .reply-canvas textarea{display:block;border:0;border-radius:0;padding:0;min-height:90px;resize:none}
+.inline-ai-reply .reply-canvas textarea:focus{outline:none}
+.mail-canvas{cursor:text}
+.mail-canvas .mail-rich-editor{min-height:120px;padding-bottom:8px}
+.mail-canvas:focus-within .mail-rich-editor:focus{box-shadow:none}
+.signature-inline{position:relative;margin-top:6px;padding-right:28px;cursor:auto}
+.signature-inline:before{content:'--';display:block;color:#9aa5ab;font:12px/1.4 Arial,sans-serif}
+.signature-inline-text{outline:none;color:#242424;overflow-wrap:anywhere;border-radius:3px}
+.signature-inline-text:focus{background:#f6faf9}
+.signature-inline-text p{font-size:10pt!important;line-height:1.35}
+.signature-inline-text p:first-child{font-size:17pt!important;line-height:1.15}
+.signature-inline-banner{display:block;width:auto;height:auto;max-width:min(200px,100%);max-height:67px;margin-top:6px}
+.signature-inline-settings{position:absolute;top:0;right:0;padding:4px;color:#7a8a93}
+.signature-inline-settings:hover{color:var(--teal)}
+.signature-inline-note{font-size:12px;color:#7a8a93}
+.signature-inline.off:before{display:none}
 .signature-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
 .signature-editor .button-row{display:flex;gap:10px}
 @media(max-width:640px){.signature-fields{grid-template-columns:1fr}}

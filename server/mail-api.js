@@ -4,7 +4,7 @@ import { MailError, mailConfiguration, mailConfigured } from './microsoft-graph.
 import { delegatedGraphClient } from './microsoft-oauth.js';
 import { hostingerConfigured, hostingerConfiguration, hostingerMailHandler } from './hostinger-mail.js';
 import { createClient } from '@supabase/supabase-js';
-import { bannerAttachment, insertSignature, loadSignature, SIGNATURE_CID, textToHtml } from './email-signature.js';
+import { bannerAttachment, customSignatureHtml, insertSignature, loadSignature, SIGNATURE_CID, textToHtml } from './email-signature.js';
 
 const fields = 'id,internetMessageId,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,lastModifiedDateTime,isRead,isDraft,importance,flag,hasAttachments,parentFolderId,webLink,changeKey';
 // Prevent parallel/repeated dispatch in one warm instance. Microsoft is still authoritative;
@@ -190,6 +190,7 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
       }
       if (action === 'send') {
         const approved = unseal(input.approval, 'approval', env);
+        if (input.signature_html !== undefined && (typeof input.signature_html !== 'string' || input.signature_html.length > 20000)) throw new MailError(400, 'The signature is too long.');
         for (const [key, expires] of dispatches) if (expires < Date.now()) dispatches.delete(key);
         const key = `${mailbox}:${approved.id}`;
         if (dispatches.has(key)) throw new MailError(409, 'A send was already requested for this draft. Check Sent Items in Outlook before taking another action.');
@@ -200,7 +201,9 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
           if (!record.isDraft || version(record) !== approved.version) throw new MailError(409, 'This draft changed or was sent. Review its current version before sending.');
           let signature;
           try { signature = await companySignature(env); } catch { throw new MailError(503, 'The email signature could not be loaded. Nothing was sent; try again.'); }
-          if (signature) await addSignature(graph, approved.id, signature);
+          // A signature edited inside this email replaces the saved one; cleared means none.
+          const signatureBlock = signature && (typeof input.signature_html === 'string' ? customSignatureHtml(input.signature_html, { banner: !!signature.banner_base64 }) : signature.html);
+          if (signatureBlock) await addSignature(graph, approved.id, { ...signature, html: signatureBlock });
           requested = true;
           await graph(`/messages/${segment(approved.id)}/send`, { method: 'POST' });
         } catch (error) { if (!requested) dispatches.delete(key); throw error; }

@@ -78,3 +78,20 @@ test('signature is placed above quoted history and only once', () => {
   assert.equal(placeAboveQuote('<body class="x"><p>q</p></body>', '<p>new</p>'), '<body class="x"><p>new</p><p>q</p></body>');
   assert.doesNotMatch(signatureHtml({ name: '<script>x</script>' }), /<script>/);
 });
+
+test('a signature edited in the email is sent cleaned, with the banner; a cleared one sends none', async () => {
+  const sendWith = (db, graph, signatureHtml) => sendAiDraft({ db, graph, mailbox: 'owner@outlook.com', draftId: 'd1', updatedAt: '2026-10-07T10:00:00Z', attachments: [], actor: 'owner@example.com', signatureHtml });
+  let graph = fakeGraph();
+  assert.equal((await sendWith(fakeDb(), graph, '<p onclick="x()">Raza Iqbal</p><p>Field Service Manager</p><script>bad()</script>')).status, 200);
+  let html = graph.calls.find(call => call.method === 'PATCH').body.body.content;
+  assert.match(html, /Field Service Manager/);
+  assert.doesNotMatch(html, /Field Service Specialist|onclick|<script/);
+  assert.match(html, /cid:dcx-signature-banner/);
+  assert.ok(graph.calls.some(call => call.body?.name === 'dcx-signature-banner.jpg'));
+
+  graph = fakeGraph();
+  assert.equal((await sendWith(fakeDb(), graph, '<p><br></p>')).status, 200);
+  html = graph.calls.find(call => call.method === 'PATCH').body.body.content;
+  assert.doesNotMatch(html, /dcx-signature|Raza Iqbal/);
+  assert.ok(!graph.calls.some(call => call.body?.name === 'dcx-signature-banner.jpg'));
+});

@@ -23,9 +23,9 @@ export function cleanSignatureFields(input) {
 }
 
 // Mirrors Raza's Outlook signature: script-style blue name, 12pt details, then the DCX banner.
-export function signatureHtml(fields, { banner = true, bannerSrc = `cid:${SIGNATURE_CID}` } = {}) {
+export function signatureRows(fields) {
   const f = fields || {};
-  const rows = [
+  return [
     line(escape(f.name), "font-size:22pt;font-family:'Brush Script MT',cursive;color:#00B0F0"),
     f.title && line(escape(f.title)),
     f.direct_phone && line(`D: ${escape(f.direct_phone)}`),
@@ -33,9 +33,39 @@ export function signatureHtml(fields, { banner = true, bannerSrc = `cid:${SIGNAT
     f.support_label && line(escape(f.support_label)),
     f.support_phone && line(escape(f.support_phone)),
     f.support_email && line(mail(f.support_email)),
-    banner && line('&nbsp;') + `<p style="margin:0"><img src="${bannerSrc}" width="400" height="133" alt="DCX Critical Power Services" style="width:400px;height:133px;display:block"></p>`,
-  ].filter(Boolean);
-  return `<div class="dcx-signature" style="font-family:Calibri,Arial,sans-serif;color:#000">${rows.join('')}</div>`;
+  ].filter(Boolean).join('');
+}
+const bannerHtml = src => line('&nbsp;') + `<p style="margin:0"><img src="${src}" width="400" height="133" alt="DCX Critical Power Services" style="width:400px;height:133px;display:block"></p>`;
+const wrap = content => `<div class="dcx-signature" style="font-family:Calibri,Arial,sans-serif;color:#000">${content}</div>`;
+
+export function signatureHtml(fields, { banner = true, bannerSrc = `cid:${SIGNATURE_CID}` } = {}) {
+  return wrap(signatureRows(fields) + (banner ? bannerHtml(bannerSrc) : ''));
+}
+
+// The signature as edited inside one email. Only basic formatting and mailto/web links survive;
+// everything else is dropped. Returns '' when the person cleared it, meaning "no signature".
+const allowedTags = new Set(['p', 'div', 'br', 'span', 'a', 'b', 'strong', 'i', 'em', 'u']);
+const attribute = (attrs, name) => { const match = attrs.match(new RegExp(`\\s${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i')); return match ? (match[2] ?? match[3]) : ''; };
+export function cleanSignatureMarkup(html) {
+  const source = String(html || '').slice(0, 20000)
+    .replace(/<(script|style|iframe|object|embed|svg|math|template|title)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+  const clean = source.replace(/<(\/?)([a-z][a-z0-9]*)\b([^>]*)>/gi, (_, close, name, attrs) => {
+    const tag = name.toLowerCase();
+    if (!allowedTags.has(tag)) return '';
+    if (close) return tag === 'br' ? '' : `</${tag}>`;
+    let kept = '';
+    const css = attribute(attrs, 'style').replace(/&quot;/g, "'");
+    if (css && !/url\s*\(|expression|javascript:|[<>\\]/i.test(css)) kept += ` style="${css.replace(/"/g, "'")}"`;
+    const href = tag === 'a' ? attribute(attrs, 'href') : '';
+    if (/^(mailto:|https?:\/\/)/i.test(href)) kept += ` href="${href.replace(/"/g, '%22')}"`;
+    return `<${tag}${kept}>`;
+  });
+  return clean.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '').length ? clean : '';
+}
+export function customSignatureHtml(markup, { banner = true } = {}) {
+  const clean = cleanSignatureMarkup(markup);
+  return clean ? wrap(clean + (banner ? bannerHtml(`cid:${SIGNATURE_CID}`) : '')) : '';
 }
 
 export function signatureText(fields) {

@@ -2,7 +2,7 @@
 // signature and any attached files. Replaces n8n Workflow 3. The database claim makes the
 // send happen at most once; anything that fails before Microsoft is asked to send releases
 // the draft, and a failure during the send marks it uncertain so nobody resends blindly.
-import { bannerAttachment, loadSignature, textToHtml } from './email-signature.js';
+import { bannerAttachment, customSignatureHtml, loadSignature, textToHtml } from './email-signature.js';
 
 const checked = async query => { const { data, error } = await query; if (error) throw error; return data; };
 const addresses = list => (list || []).map(item => String(item.emailAddress?.address || '').trim().toLowerCase()).filter(Boolean);
@@ -16,14 +16,17 @@ export function placeAboveQuote(html, block) {
   return `${source.slice(0, at)}${block}${source.slice(at)}`;
 }
 
-export async function sendAiDraft({ db, graph, mailbox, draftId, updatedAt, attachments, actor }) {
+// signatureHtml: the signature as edited in this email ('' for none); undefined uses the saved one.
+export async function sendAiDraft({ db, graph, mailbox, draftId, updatedAt, attachments, actor, signatureHtml }) {
   const claim = await checked(db.rpc('crm_claim_draft_send', { p_draft: draftId, p_updated_at: updatedAt, p_actor: actor, p_mailbox: mailbox }));
   if (!claim?.ok) return { status: 409, body: { error: claim?.reason || 'This draft cannot be sent.' } };
   const finish = (outcome, extra = {}) => checked(db.rpc('crm_finish_draft_send', { p_draft: draftId, p_outcome: outcome, p_provider_ref: extra.ref || null, p_body_html: extra.html || null, p_attachments: extra.files || [], p_actor: actor, p_error: extra.error || null }));
 
   let replyId, html, files = [];
   try {
-    const signature = await loadSignature(db);
+    const saved = await loadSignature(db);
+    const signatureBlock = saved && (typeof signatureHtml === 'string' ? customSignatureHtml(signatureHtml, { banner: !!saved.banner_base64 }) : saved.html);
+    const signature = signatureBlock ? { ...saved, html: signatureBlock } : null;
     const reply = await graph(`/messages/${encodeURIComponent(claim.reply_ref)}/createReply`, { method: 'POST', body: {} });
     replyId = reply.id;
     html = placeAboveQuote(reply.body?.content, `<div class="dcx-reply" style="font-family:Calibri,Arial,sans-serif;font-size:12pt">${textToHtml(claim.body)}</div>${signature ? `<br>${signature.html}` : ''}<br>`);

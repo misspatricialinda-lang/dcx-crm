@@ -3,7 +3,7 @@ import { ArrowRight, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, X } fro
 import type { Client } from '../../types/operations';
 import { trackingRequest } from '../../lib/email-tracking';
 import { crmRequest } from '../../lib/crm-client';
-import { SignaturePreview } from './EmailSignature';
+import { SignatureField } from './EmailSignature';
 import { buildCustomerQuotationPdf, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
 
 type Draft = { id:string; thread_id:string; current_body:string; original_ai_body:string|null; to_addresses:string[]; status:string; updated_at:string };
@@ -32,6 +32,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   const [body,setBody]=useState(''), [savedBody,setSavedBody]=useState('');
   const [busy,setBusy]=useState(''), [error,setError]=useState(''), [notice,setNotice]=useState('');
   const [instruction,setInstruction]=useState(''), [files,setFiles]=useState<File[]>([]);
+  const [signatureHtml,setSignatureHtml]=useState<string>();
   const [quotationCustomerId,setQuotationCustomerId]=useState(customerId||''), [quotations,setQuotations]=useState<CustomerQuotation[]|null>(null);
   const editor=useRef<HTMLTextAreaElement>(null);
   const dirty=!!draft&&body!==savedBody;
@@ -53,7 +54,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     if(shownFor.current!==internetId){shownFor.current=internetId;setLoaded(false);setNotice('');setFiles([]);setQuotations(null);void load();}
     else if(!dirty&&!busy)void load(true);
   },[internetId,revision]);
-  useEffect(()=>{const node=editor.current;if(node){node.style.height='auto';node.style.height=`${Math.max(node.scrollHeight,140)}px`;}},[body,draft?.id]);
+  useEffect(()=>{const node=editor.current;if(node){node.style.height='auto';node.style.height=`${Math.max(node.scrollHeight,90)}px`;}},[body,draft?.id]);
 
   async function workflow(action:'rewrite'|'regenerate'|'save'|'send',extra:Record<string,unknown>={}){
     if(!draft||busy)return null;
@@ -75,7 +76,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     if(dirty&&!await save())return;
     const attachments=await Promise.all(files.map(async file=>({name:file.name,content_type:file.type||'application/octet-stream',content_base64:await fileToBase64(file)})));
     // Send exactly the version on screen; after a save that is the freshly loaded one.
-    await workflow('send',{attachments,updated_at:latest.current?.updated_at});
+    await workflow('send',{attachments,updated_at:latest.current?.updated_at,...(signatureHtml===undefined?{}:{signature_html:signatureHtml})});
   }
   async function discard(){
     if(!draft||busy)return;
@@ -121,8 +122,10 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     <header><strong><Sparkles size={15}/> Draft reply</strong><span className={dirty?'unsaved':''}>{busy==='rewrite'||busy==='regenerate'?'AI is writing…':dirty?'Unsaved changes':'Ready to review'}</span></header>
     <p className="inline-ai-to">To: {draft.to_addresses.join(', ')}</p>
     {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status" className="inline-ai-notice">{notice}</p>}
-    <textarea ref={editor} aria-label="Edit AI reply draft" value={body} onChange={event=>setBody(event.target.value)} disabled={!!busy}/>
-    <SignaturePreview/>
+    <div className="reply-canvas" onClick={event=>{if(event.target===event.currentTarget)editor.current?.focus();}}>
+      <textarea ref={editor} aria-label="Edit AI reply draft" value={body} onChange={event=>setBody(event.target.value)} disabled={!!busy}/>
+      <SignatureField key={draft.id} onChange={setSignatureHtml} disabled={!!busy}/>
+    </div>
     <div className="inline-ai-tweaks"><span>Change it:</span>{quickChanges.map(label=><button type="button" key={label} className="chip" disabled={!!busy} onClick={()=>void rewrite(label)}>{label}</button>)}
       <form onSubmit={event=>{event.preventDefault();void rewrite(instruction);}}><input aria-label="Tell AI what to change" placeholder="Tell AI what to change…" value={instruction} onChange={event=>setInstruction(event.target.value)} disabled={!!busy}/><button type="submit" className="secondary compact" disabled={!!busy||!instruction.trim()}>Apply</button></form>
     </div>

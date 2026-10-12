@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
-import { PenLine, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Settings, X } from 'lucide-react';
 
 type Fields = { name: string; title: string; direct_phone: string; email: string; support_label: string; support_phone: string; support_email: string };
-type Signature = { fields: Fields; enabled: boolean; preview_html: string; updated_at: string; updated_by: string | null };
+type Signature = { fields: Fields; enabled: boolean; preview_html: string; body_html: string; banner_src: string; updated_at: string; updated_by: string | null };
 const labels: [keyof Fields, string][] = [['name', 'Name'], ['title', 'Job title'], ['direct_phone', 'Direct phone'], ['email', 'Email'], ['support_label', 'Support line heading'], ['support_phone', 'Support phone'], ['support_email', 'Support email']];
 
 // One shared copy so every open reply shows the same signature and updates together after an edit.
@@ -15,19 +15,33 @@ function loadSignature(force = false) {
   return cached;
 }
 
-// Shows the signature that will be added when the email is sent, with a way to edit it.
-export function SignaturePreview() {
+// The signature inside the message area, like Gmail: edit it here for this one email, or clear
+// it to send none. onChange(undefined) means "use the saved signature unchanged".
+export function SignatureField({ onChange, disabled }: { onChange: (html: string | undefined) => void; disabled?: boolean }) {
   const [signature, setSignature] = useState<Signature | null>(null);
   const [editing, setEditing] = useState(false);
+  const [empty, setEmpty] = useState(false);
+  const text = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const refresh = () => void loadSignature().then(setSignature);
     refresh(); listeners.add(refresh);
     return () => { listeners.delete(refresh); };
   }, []);
+  // A new saved signature replaces any one-off edit.
+  useEffect(() => {
+    if (text.current && signature) { text.current.innerHTML = signature.body_html; setEmpty(false); onChange(undefined); }
+  }, [signature?.updated_at, signature?.enabled]);
   if (!signature) return null;
-  return <div className="signature-preview">
-    <div className="signature-preview-head"><span>{signature.enabled ? 'Signature added when sent' : 'Signature is turned off'}</span><button type="button" className="text-button" onClick={() => setEditing(true)}><PenLine size={13} /> Edit signature</button></div>
-    {signature.enabled && <div className="signature-preview-body" dangerouslySetInnerHTML={{ __html: signature.preview_html }} />}
+  const settings = <button type="button" className="text-button signature-inline-settings" title="Signature settings" aria-label="Signature settings" onClick={() => setEditing(true)}><Settings size={14} /></button>;
+  return <div className={`signature-inline${signature.enabled ? '' : ' off'}`}>
+    {signature.enabled
+      ? <>
+        <div ref={text} className="signature-inline-text" role="textbox" aria-label="Signature for this email" aria-multiline="true" contentEditable={!disabled} suppressContentEditableWarning
+          onInput={event => { const node = event.currentTarget; setEmpty(!node.textContent?.trim()); onChange(node.innerHTML); }} />
+        {signature.banner_src && !empty && <img className="signature-inline-banner" src={signature.banner_src} alt="DCX banner, added below the signature" />}
+      </>
+      : <span className="signature-inline-note">No signature</span>}
+    {settings}
     {editing && <SignatureEditor signature={signature} onClose={() => setEditing(false)} />}
   </div>;
 }
@@ -48,7 +62,7 @@ function SignatureEditor({ signature, onClose }: { signature: Signature; onClose
   return <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <form className="detail-modal signature-editor" role="dialog" aria-modal="true" aria-label="Email signature" onSubmit={event => { event.preventDefault(); void save(); }}>
       <div className="panel-heading"><h2>Email signature</h2><button type="button" className="text-button" aria-label="Close" onClick={onClose}><X size={18} /></button></div>
-      <p>Added to every email sent from this app, with the DCX banner below it. Outlook adds its own signature only to emails written in Outlook.</p>
+      <p>The saved signature for every email sent from this app, with the DCX banner below it. To change it for one email only, edit it inside that email. Outlook adds its own signature only to emails written in Outlook.</p>
       {error && <p role="alert" className="form-error">{error}</p>}
       <div className="signature-fields">{labels.map(([key, label]) => <label key={key}>{label}<input value={fields[key] || ''} onChange={event => setFields(old => ({ ...old, [key]: event.target.value }))} required={key === 'name'} maxLength={200} /></label>)}</div>
       <label className="checkbox-label"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /> Add this signature to sent emails</label>

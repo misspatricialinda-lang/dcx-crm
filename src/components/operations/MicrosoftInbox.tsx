@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { trackingRequest } from '../../lib/email-tracking';
 import { InlineAiReply, type ReplyOutcome } from "./InlineAiReply";
 import { TrackedInbox } from "./TrackedInbox";
-import { SignaturePreview } from "./EmailSignature";
+import { SignatureField } from "./EmailSignature";
 import { FollowupBar, FollowupRules, followupDate, followupLabels, followupRequest, type FollowupRecord, type FollowupSettings } from "./FollowupControls";
 import DOMPurify from "dompurify";
 import {
@@ -12,7 +12,6 @@ import {
   ChevronLeft,
   Download,
   Folder,
-  Mail,
   ShieldAlert,
   Trash2,
   FileText,
@@ -59,7 +58,11 @@ function formatMailListDate(message: MicrosoftMessage) {
     day: "numeric",
   });
 }
-const folderOrder = ['inbox', 'junkemail', 'drafts', 'sentitems', 'deleteditems', 'archive', 'conversationhistory', 'outbox'];
+const folderOrder = ['inbox', 'junkemail', 'drafts', 'sentitems', 'deleteditems', 'archive', 'conversationhistory'];
+// The app sends mail directly, so Outlook's Outbox is always empty here.
+const hiddenFolders = new Set(['outbox']);
+// Matches the CSS phone layout, where the reading screen already shows the whole chain.
+const isPhone = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
 function folderKey(folder: MicrosoftFolder) { return `${folder.id} ${folder.displayName}`.toLowerCase().replace(/[^a-z]/g, ''); }
 function folderRank(folder: MicrosoftFolder) {
   const key = folderKey(folder);
@@ -68,7 +71,7 @@ function folderRank(folder: MicrosoftFolder) {
 }
 function FolderIcon({ folder }: { folder: MicrosoftFolder }) {
   const rank = folderRank(folder);
-  const Icon = rank === 0 ? Inbox : rank === 1 ? ShieldAlert : rank === 2 ? PenLine : rank === 3 ? Send : rank === 4 ? Trash2 : rank === 5 ? Archive : rank === 7 ? Mail : Folder;
+  const Icon = rank === 0 ? Inbox : rank === 1 ? ShieldAlert : rank === 2 ? PenLine : rank === 3 ? Send : rank === 4 ? Trash2 : rank === 5 ? Archive : Folder;
   return <Icon size={16} aria-hidden="true" />;
 }
 async function attachmentBase64(file: File) {
@@ -240,7 +243,7 @@ function MicrosoftInbox({
       page = await mailRequest("page", { cursor: page.next });
       all.push(...page.records);
     }
-    setFolders(all.sort((a, b) => folderRank(a) - folderRank(b) || a.displayName.localeCompare(b.displayName)));
+    setFolders(all.filter(f => !hiddenFolders.has(f.displayName.toLowerCase())).sort((a, b) => folderRank(a) - folderRank(b) || a.displayName.localeCompare(b.displayName)));
   }, []);
   const refresh = useCallback(
     async (cursor?: string) => {
@@ -353,7 +356,7 @@ function MicrosoftInbox({
         (thread) => thread.messages,
       );
       setThreadMessages((old) => ({ ...old, [id]: ordered }));
-      if (ordered.length > 1)
+      if (ordered.length > 1 && !isPhone())
         setOpenThreads((old) => (old.includes(id) ? old : [...old, id]));
     },
     [],
@@ -734,7 +737,7 @@ function MicrosoftInbox({
                       setSelected(t.id);
                       setPhoneReading(true);
                       if (selected !== t.id) setEditorRequest(undefined);
-                      if (hasThread)
+                      if (hasThread && !isPhone())
                         setOpenThreads((old) =>
                           old.includes(t.id)
                             ? old.filter((id) => id !== t.id)
@@ -859,7 +862,7 @@ function MicrosoftInbox({
             hasAiDraft={draftKeys.has(openId)}
             onReplyOutcome={outcome => replyOutcome(openId, outcome)}
             onNextDraft={nextDraft(openId) ? () => goTo(nextDraft(openId)) : undefined}
-            onBack={() => { if (canLeave()) { dirty.current = false; setPhoneReading(false); } }}
+            onBack={() => { if (canLeave()) { dirty.current = false; setPhoneReading(false); setOpenThreads([]); } }}
             followup={followupByKey.get(openId)}
             onFollowupChanged={() => void loadFollowups()}
             backLabel={aiView ? 'AI drafts' : followView ? 'Follow-ups' : folders.find((f) => f.id === folder)?.displayName || 'Inbox'}
@@ -1581,6 +1584,7 @@ function DraftEditor({
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>(() => customers.filter(customer => customer.email).map(customer => ({ name: customer.contact || customer.name, email: customer.email, company: customer.name, source: 'CRM customer' })));
   const [sent, setSent] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [signatureHtml, setSignatureHtml] = useState<string>();
   const [quotationOptions, setQuotationOptions] = useState<CustomerQuotation[] | null>(null);
   const [quotationBusy, setQuotationBusy] = useState(false);
   const [quotationCustomerId, setQuotationCustomerId] = useState(customerId || '');
@@ -1725,7 +1729,7 @@ function DraftEditor({
     try {
       const current = !saved || dirty || files.length ? await persistDraft() : saved;
       const prepared = await mailRequest<{ record: MicrosoftMessage; approval: string }>("review", {}, { id: current.record.id });
-      const result = await mailRequest("send", {}, { approval: prepared.approval });
+      const result = await mailRequest("send", {}, { approval: prepared.approval, ...(signatureHtml === undefined ? {} : { signature_html: signatureHtml }) });
       setSent(true);
       setNotice(result.message);
       onChanged();
@@ -1798,8 +1802,10 @@ function DraftEditor({
             <button type="button" aria-label="Undo" title="Undo" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('undo')}>↶</button>
             <button type="button" aria-label="Redo" title="Redo" disabled={busy} onMouseDown={event => event.preventDefault()} onClick={() => formatMessage('redo')}>↷</button>
           </div>}
-          <div ref={editorRef} className="mail-rich-editor" role="textbox" aria-label="Email reply content" aria-multiline="true" contentEditable={!busy && ready} suppressContentEditableWarning data-placeholder="Write your message…" onInput={event => { setContent(event.currentTarget.innerHTML); change(); }} />
-          {provider === 'microsoft' && <SignaturePreview />}
+          <div className={provider === 'microsoft' ? 'mail-canvas' : undefined}>
+            <div ref={editorRef} className="mail-rich-editor" role="textbox" aria-label="Email reply content" aria-multiline="true" contentEditable={!busy && ready} suppressContentEditableWarning data-placeholder="Write your message…" onInput={event => { setContent(event.currentTarget.innerHTML); change(); }} />
+            {provider === 'microsoft' && <SignatureField onChange={setSignatureHtml} disabled={busy} />}
+          </div>
           {provider === 'microsoft' && <div className="mail-file-picker"><label><Paperclip size={15}/> Attach files<input type="file" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);event.target.value='';if(files.length+incoming.length>5||[...files,...incoming].reduce((size,file)=>size+file.size,0)>3*1024*1024){setError('Attach up to five files, with a combined size under 3 MB.');return;}setFiles(current=>[...current,...incoming]);if(incoming.length)change();}}/></label><select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotationOptions(null);}}><option value="">Choose customer for quotation</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select><button className="secondary compact" type="button" disabled={busy||quotationBusy||!quotationCustomerId} onClick={()=>void loadQuotations()}>{quotationBusy?'Loading…':'Attach saved quotation'}</button>{quotationOptions&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotationOptions.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotationOptions.length?'Choose a quotation PDF':'No saved quotations for this customer'}</option>{quotationOptions.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} · {quote.status} · created {new Date(quote.created_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}</option>)}</select>}{files.map((file,index)=><span key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>{setFiles(current=>current.filter((_,i)=>i!==index));change();}}><X size={13}/></button></span>)}</div>}
           <div className="button-row">
             <button

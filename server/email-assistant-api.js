@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { configuration, getSession } from './auth-core.js';
 import { n8nConfig } from './n8n-config.js';
-import { cleanSignatureFields, signatureHtml } from './email-signature.js';
+import { cleanSignatureFields, signatureHtml, signatureRows } from './email-signature.js';
 import { sendAiDraft } from './draft-send.js';
 import { delegatedGraphClient } from './microsoft-oauth.js';
 
@@ -34,7 +34,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       const row=await checked(db.from('crm_email_signature').select('fields,enabled,banner_base64,banner_content_type,updated_at,updated_by').eq('id',1).maybeSingle());
       if(!row)return reply(res,200,{signature:null});
       const banner=row.banner_base64?`data:${row.banner_content_type};base64,${row.banner_base64}`:'';
-      return reply(res,200,{signature:{fields:row.fields,enabled:row.enabled,has_banner:!!banner,preview_html:signatureHtml(row.fields,{banner:!!banner,bannerSrc:banner}),updated_at:row.updated_at,updated_by:row.updated_by}});
+      return reply(res,200,{signature:{fields:row.fields,enabled:row.enabled,has_banner:!!banner,preview_html:signatureHtml(row.fields,{banner:!!banner,bannerSrc:banner}),body_html:signatureRows(row.fields),banner_src:banner,updated_at:row.updated_at,updated_by:row.updated_by}});
     }
     if(req.method==='GET' && url.searchParams.get('action')==='location') {
       const id=url.searchParams.get('id');if(!uuid(id))return reply(res,400,{error:'Invalid conversation.'});
@@ -116,9 +116,10 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     // Sending runs here through Microsoft Graph; n8n is used only to write and rewrite drafts.
     if (input.action === 'send') {
       if (typeof input.updated_at !== 'string' || !Number.isFinite(Date.parse(input.updated_at))) return reply(res, 400, { error: 'Reload the draft before sending.' });
+      if (input.signature_html !== undefined && (typeof input.signature_html !== 'string' || input.signature_html.length > 20000)) return reply(res, 400, { error: 'The signature is too long.' });
       const connected = injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await delegatedGraphClient(env);
       if (!connected) return reply(res, 503, { error: 'Connect the Outlook mailbox before sending.' });
-      const result = await sendAiDraft({ db, graph: connected.graph, mailbox: connected.connection.email_address, draftId: draft.id, updatedAt: input.updated_at, attachments: input.attachments, actor: session.email });
+      const result = await sendAiDraft({ db, graph: connected.graph, mailbox: connected.connection.email_address, draftId: draft.id, updatedAt: input.updated_at, attachments: input.attachments, actor: session.email, signatureHtml: input.signature_html });
       return reply(res, result.status, result.body);
     }
     const config = n8nConfig(env);
