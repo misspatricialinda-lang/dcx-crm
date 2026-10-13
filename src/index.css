@@ -381,3 +381,15 @@
 @media(min-width:641px) and (max-width:1000px){.outlook-shell{grid-template-rows:auto minmax(0,1fr)}.outlook-shell>.mail-folders{overflow:visible}}
 .quotation-toolbar{justify-content:flex-end}
 .inline-quote-modal{max-width:1100px;width:min(1100px,96vw)}.inline-ai-notice .text-button{margin-left:8px}
+/* Follow-up reminder bar in plain words: date and reason on the left, Change date / Remove reminder on the right */
+.followup-bar{justify-content:space-between;gap:10px 16px}
+.followup-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 320px}
+.followup-text strong{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.followup-text span{font-size:12px;line-height:1.5;opacity:.9}
+.followup-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.followup-actions select,.followup-bar.none select{flex:0 1 auto;width:auto}
+.followup-bar.none{justify-content:flex-start;color:#5b6b76}
+.inline-ai-new-customer{flex-basis:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;border:1px dashed #bfd9cf;border-radius:8px;padding:10px;background:#f8fbfa}
+.inline-ai-new-customer p{grid-column:1/-1;font-size:12px;color:#4b5a67}.inline-ai-new-customer .btns{grid-column:1/-1;display:flex;gap:8px}
+.inline-ai-new-customer input{min-height:30px;padding:6px 8px}
+@media(max-width:700px){.inline-ai-new-customer{grid-template-columns:1fr}}

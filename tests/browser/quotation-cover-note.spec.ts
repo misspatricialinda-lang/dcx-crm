@@ -46,8 +46,8 @@ test('a quotation made from the AI draft is attached as a PDF and the reply beco
   await page.locator('.thread-item').first().click();
   await expect(page.getByLabel('Edit AI reply draft')).toHaveValue(/Thanks for reaching out/);
 
-  await page.getByLabel('Customer for saved quotation').selectOption(customer.id);
-  await page.getByRole('button', { name: 'New quotation' }).click();
+  // The sender is already a customer, so Make quotation opens their quotation editor straight away.
+  await page.getByRole('button', { name: 'Make quotation' }).click();
   const editor = page.getByRole('dialog', { name: 'Quotation editor' });
   await editor.getByLabel('Product/Service row 1').fill('Replacement battery 12V 9Ah');
   await editor.getByLabel('Quantity row 1').fill('40');
@@ -62,4 +62,45 @@ test('a quotation made from the AI draft is attached as a PDF and the reply beco
   await expect(page.getByLabel('Edit AI reply draft')).toHaveValue(/Please see attached quote/);
   await page.getByRole('button', { name: 'Undo rewrite' }).click();
   await expect(page.getByLabel('Edit AI reply draft')).toHaveValue(/Thanks for reaching out/);
+});
+
+test('Make quotation offers to add a sender who is not a customer yet', async ({ page }) => {
+  const message = {
+    id: 'm2', internetMessageId: '<m2@example.com>', conversationId: 'conv-2', subject: 'Quote request', bodyPreview: 'Please quote.',
+    from: { emailAddress: { address: 'new.buyer@example.com', name: 'New Buyer' } }, toRecipients: [{ emailAddress: { address: 'owner@example.com' } }], receivedDateTime: '2026-10-13T10:00:00Z',
+    isRead: true, isDraft: false, importance: 'normal', hasAttachments: false, parentFolderId: 'inbox', changeKey: 'v1', body: { contentType: 'text', content: 'Please quote.' },
+  };
+  const draft = { id: '11111111-1111-4111-8111-111111111112', thread_id: '22222222-2222-4222-8222-222222222223', current_body: 'Hi,\n\nThank you,', original_ai_body: 'x', to_addresses: ['new.buyer@example.com'], status: 'editing', updated_at: '2026-10-13T10:00:00Z', deleted_at: null };
+  let created: any;
+  await page.route('**/api/auth', route => route.fulfill({ json: { configured: true, user: { email: 'owner@example.com' } } }));
+  await page.route('**/api/mail?*', route => {
+    const action = new URL(route.request().url()).searchParams.get('action');
+    return route.fulfill({ json: action === 'status' ? { connected: true, provider: 'microsoft', mailbox: 'owner@example.com', inboxId: 'inbox' }
+      : action === 'folders' ? { records: [{ id: 'inbox', displayName: 'Inbox', childFolderCount: 0, unreadItemCount: 0, totalItemCount: 1 }], next: null }
+      : action === 'messages' || action === 'thread' ? { records: [message], next: null } : action === 'message' ? { record: message } : { records: [], next: null } });
+  });
+  await page.route('**/api/email-assistant**', route => {
+    const action = new URL(route.request().url()).searchParams.get('action');
+    return route.fulfill({ json: action === 'for-message' ? { draft } : action === 'queue' ? { records: [] } : action === 'signature' ? { signature: null } : { success: true } });
+  });
+  await page.route('**/api/crm?*', route => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('entity') === 'customers' && route.request().method() === 'POST') {
+      created = route.request().postDataJSON();
+      return route.fulfill({ status: 201, json: { record: { id: '44444444-4444-4444-8444-444444444444', ...created, phone: '', notes: '', billing_address: '', price_book: 'standard', updated_at: '2026-10-13T10:00:00Z' } } });
+    }
+    return route.fulfill({ json: { records: [], books: [], history: [] } });
+  });
+  await page.route('**/api/notifications?*', route => route.fulfill({ json: { records: [], unread: 0 } }));
+  await page.route('**/api/followups**', route => route.fulfill({ json: { records: [], settings: {} } }));
+  await page.route('**/api/tracking?*', route => route.fulfill({ json: {} }));
+  await page.goto('/#inbox');
+  await page.locator('.thread-item').first().click();
+  await page.getByRole('button', { name: 'Make quotation' }).click();
+  await expect(page.getByText('new.buyer@example.com is not a customer yet.')).toBeVisible();
+  await expect(page.getByLabel('New customer email')).toHaveValue('new.buyer@example.com');
+  await page.getByLabel('New customer name').fill('Front Street Offices');
+  await page.getByRole('button', { name: 'Add customer and make quotation' }).click();
+  await expect(page.getByRole('dialog', { name: 'Quotation editor' })).toBeVisible();
+  expect(created).toMatchObject({ name: 'Front Street Offices', email: 'new.buyer@example.com', relationship_type: 'customer' });
 });

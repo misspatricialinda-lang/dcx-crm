@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlarmClock, Check, X } from 'lucide-react';
+import { AlarmClock, X } from 'lucide-react';
 
 export type FollowupRecord = {
   thread_id: string; provider_thread_key: string | null; subject: string; followup_at: string; reason: string;
@@ -7,10 +7,10 @@ export type FollowupRecord = {
 };
 export type FollowupSettings = { enabled: boolean; quote_days: number[]; question_days: number[]; lead_days: number[] };
 export const followupLabels: Record<string, string> = {
-  quote: 'Quotation sent, no reply yet',
-  awaiting_answer: 'Waiting for an answer to our question',
-  quiet_lead: 'Prospect went quiet',
-  manual: 'Your reminder',
+  quote: 'Quote sent, no reply yet',
+  awaiting_answer: 'Waiting for their answer',
+  quiet_lead: 'Possible customer went quiet',
+  manual: 'You asked for a reminder',
 };
 
 export async function followupRequest<T>(action: string, body?: unknown): Promise<T> {
@@ -25,8 +25,17 @@ export const followupDate = (iso: string) => new Date(iso).toLocaleString('en-CA
 
 // The server turns these into 9:00 AM Toronto time, so the result does not depend on this computer's timezone.
 const choices: [string, number][] = [['Tomorrow', 1], ['In 3 business days', 3], ['Next week', 5]];
+// Why there is a reminder, in plain words, for the line under the date.
+const reasons: Record<string, string> = {
+  quote: 'You sent them a quote and they have not replied.',
+  awaiting_answer: 'You asked them a question and they have not answered.',
+  quiet_lead: 'This possible customer stopped replying.',
+  manual: 'You asked to be reminded about this email.',
+};
+const dayAndTime = (iso: string) => new Date(iso).toLocaleString('en-CA', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Toronto' });
 
-// The follow-up line under a conversation's subject: when it is due, why, and snooze / done / remind me.
+// The reminder line under a conversation's subject. With a reminder: when, why, what happens then,
+// and "Change date" / "Remove reminder". Without one: a single "Remind me about this email" menu.
 export function FollowupBar({ followup, conversationKey, onChanged }: { followup?: FollowupRecord; conversationKey: string; onChanged: () => void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [picking, setPicking] = useState(false);
   async function set(op: 'snooze' | 'remind' | 'done', when?: { days: number } | { date: string }) {
@@ -37,24 +46,29 @@ export function FollowupBar({ followup, conversationKey, onChanged }: { followup
     } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); }
   }
   const op = followup ? 'snooze' : 'remind';
-  const menu = <select aria-label={followup ? 'Snooze follow-up' : 'Remind me to follow up'} value="" disabled={busy} onChange={event => {
+  const menu = <select className="followup-menu" aria-label={followup ? 'Change reminder date' : 'Remind me about this email'} value="" disabled={busy} onChange={event => {
     const value = event.target.value; event.target.value = '';
     if (value === 'pick') setPicking(true); else { const choice = choices.find(([label]) => label === value); if (choice) void set(op, { days: choice[1] }); }
   }}>
-    <option value="">{followup ? 'Snooze…' : 'Remind me…'}</option>
+    <option value="">{followup ? 'Change date…' : 'Remind me about this email…'}</option>
     {choices.map(([label]) => <option key={label} value={label}>{label}</option>)}
     <option value="pick">Pick a date…</option>
   </select>;
-  return <div className={`followup-bar ${followup ? (followup.due ? 'due' : 'upcoming') : 'none'}`}>
-    {followup ? <span className="followup-when"><AlarmClock size={15} /> <strong>{followup.due ? 'Follow-up due' : `Follow up ${followupDate(followup.followup_at)}`}</strong> · {followupLabels[followup.reason] || 'Follow-up'}{followup.stage > 1 ? ' (second reminder)' : ''}</span>
-      : <span className="followup-when muted"><AlarmClock size={15} /> No follow-up set</span>}
-    {menu}
-    {picking && <form className="followup-pick" onSubmit={event => { event.preventDefault(); const value = new FormData(event.currentTarget).get('date'); if (value) void set(op, { date: String(value) }); }}>
-      <input type="date" name="date" aria-label="Follow-up date" min={new Date().toISOString().slice(0, 10)} required />
-      <button type="submit" className="secondary compact" disabled={busy}>Set</button>
-      <button type="button" className="text-button" aria-label="Cancel" onClick={() => setPicking(false)}><X size={14} /></button>
-    </form>}
-    {followup && <button type="button" className="secondary compact" disabled={busy} onClick={() => void set('done')}><Check size={14} /> Done</button>}
+  const picker = picking && <form className="followup-pick" onSubmit={event => { event.preventDefault(); const value = new FormData(event.currentTarget).get('date'); if (value) void set(op, { date: String(value) }); }}>
+    <input type="date" name="date" aria-label="Reminder date" min={new Date().toISOString().slice(0, 10)} required />
+    <button type="submit" className="secondary compact" disabled={busy}>Set</button>
+    <button type="button" className="text-button" aria-label="Cancel" onClick={() => setPicking(false)}><X size={14} /></button>
+  </form>;
+  if (!followup) return <div className="followup-bar none"><AlarmClock size={15} aria-hidden="true" />{menu}{picker}{error && <span role="alert" className="form-error">{error}</span>}</div>;
+  const reason = reasons[followup.reason] || 'They have not replied yet.';
+  const then = followup.reason === 'manual' ? 'It will show in Follow-ups that morning.' : 'If they still have not replied, the AI writes a follow-up email for you to check. Nothing is sent on its own.';
+  return <div className={`followup-bar ${followup.due ? 'due' : 'upcoming'}`}>
+    <div className="followup-text">
+      <strong><AlarmClock size={15} aria-hidden="true" /> {followup.due ? 'Time to follow up' : `Reminder: ${dayAndTime(followup.followup_at)}`}{followup.stage > 1 ? ' (second reminder)' : ''}</strong>
+      <span>{reason} {followup.due ? 'Check the AI draft below, or reply yourself.' : then}</span>
+    </div>
+    <div className="followup-actions">{menu}<button type="button" className="secondary compact" disabled={busy} onClick={() => void set('done')}><X size={14} /> Remove reminder</button></div>
+    {picker}
     {error && <span role="alert" className="form-error">{error}</span>}
   </div>;
 }

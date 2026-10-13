@@ -44,20 +44,20 @@ test('follow-ups folder, conversation tag and the follow-up bar actions', async 
   await expect(page.getByText('1 due · 0 upcoming')).toBeVisible();
   await page.locator('.thread-item', { hasText: 'Battery quote' }).click();
   const bar = page.locator('.followup-bar');
-  await expect(bar).toContainText('Follow-up due');
-  await expect(bar).toContainText('Quotation sent, no reply yet');
+  await expect(bar).toContainText('Time to follow up');
+  await expect(bar).toContainText('You sent them a quote and they have not replied.');
   await page.getByRole('button', { name: 'Rules' }).click();
   await expect(page.getByRole('dialog', { name: 'Follow-up rules' }).getByLabel('Quotation sent')).toHaveValue('3, 7');
   await page.getByRole('dialog', { name: 'Follow-up rules' }).getByRole('button', { name: 'Cancel' }).click();
-  await page.screenshot({ path: 'tmp/browser-results/followups-folder.png' });
+  await page.screenshot({ path: 'tmp/followups-folder.png' });
 
-  // Done clears it; any other conversation offers "Remind me".
-  await bar.getByRole('button', { name: 'Done' }).click();
+  // Remove reminder clears it; any other conversation offers "Remind me about this email".
+  await bar.getByRole('button', { name: 'Remove reminder' }).click();
   await expect.poll(() => posted.some(p => p.op === 'done' && p.thread_id === followup.thread_id)).toBe(true);
   await expect(page.getByText('No follow-ups due.')).toBeVisible();
   await page.locator('.mail-folders').getByRole('button', { name: 'Inbox', exact: true }).click();
   await page.locator('.thread-item', { hasText: 'General question' }).click();
-  await page.getByLabel('Remind me to follow up').selectOption('Tomorrow');
+  await page.getByLabel('Remind me about this email').selectOption('Tomorrow');
   await expect.poll(() => posted.find(p => p.op === 'remind')?.provider_thread_key).toBe('conv-other');
   expect(posted.find(p => p.op === 'remind')).toMatchObject({ days: 1 }); // the server turns this into 9 AM Toronto
 });

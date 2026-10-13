@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, FilePlus, MailX, MessageSquare, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import type { Client } from '../../types/operations';
 import { trackingRequest } from '../../lib/email-tracking';
-import { crmRequest } from '../../lib/crm-client';
+import { crmRequest, toClient } from '../../lib/crm-client';
 import { attachmentLimitError, uploadAttachment } from '../../lib/microsoft-mail';
 import { SignatureField } from './EmailSignature';
 import { buildCustomerQuotationPdf, quotationFileName, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
@@ -52,6 +52,26 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   const editor=useRef<HTMLTextAreaElement>(null);
   // "New quotation" opens the quotation editor here; a saved quote is attached and the draft becomes a cover note.
   const [quoteFor,setQuoteFor]=useState<Client|null>(null);
+  // Customers added from this panel, before the app's customer list reloads.
+  const [added,setAdded]=useState<Client[]>([]);
+  const [newCustomer,setNewCustomer]=useState<{name:string;contact:string;email:string}|null>(null);
+  const allCustomers=[...customers,...added.filter(item=>!customers.some(other=>other.id===item.id))];
+  // Make quotation: the chosen customer, else the customer whose email sent this, else offer to add the sender.
+  function makeQuotation(){
+    const sender=(draft?.to_addresses[0]||'').toLowerCase();
+    const match=allCustomers.find(item=>item.id===quotationCustomerId)||allCustomers.find(item=>item.id===customerId)||allCustomers.find(item=>sender&&item.email.toLowerCase()===sender);
+    if(match){setQuotationCustomerId(match.id);setQuoteFor(match);return;}
+    setNewCustomer({name:'',contact:'',email:sender});
+  }
+  async function addCustomer(){
+    if(!newCustomer||!newCustomer.name.trim())return;
+    setBusy('customer');setError('');
+    try{
+      const {record}=await crmRequest('entity=customers',{method:'POST',body:JSON.stringify({name:newCustomer.name.trim(),contact:newCustomer.contact.trim(),email:newCustomer.email.trim(),relationship_type:'customer'})});
+      const client=toClient(record);
+      setAdded(old=>[...old,client]);setQuotationCustomerId(client.id);setNewCustomer(null);setQuoteFor(client);
+    }catch(cause){setError((cause as Error).message);}finally{setBusy('');}
+  }
   const [undoBody,setUndoBody]=useState<{body:string;label:string}|null>(null);
   const dirty=!!draft&&body!==savedBody;
   useEffect(()=>{onDirty(dirty);},[dirty]);
@@ -201,9 +221,16 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     </div>
     <div className="inline-ai-files">
       <label className="text-button"><Paperclip size={14}/> Attach files<input type="file" multiple hidden onChange={event=>{if(event.target.files)addFiles(Array.from(event.target.files));event.target.value='';}} disabled={!!busy}/></label>
-      <select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotations(null);}}><option value="">Attach a quotation for…</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
+      <button type="button" className="secondary compact" disabled={!!busy} onClick={makeQuotation}><FilePlus size={14}/> Make quotation</button>
+      <select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotations(null);}}><option value="">Attach a saved quotation for…</option>{allCustomers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
       {quotationCustomerId&&!quotations&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>void loadQuotations()}>{busy==='quotation'?'Loading…':'Choose quotation'}</button>}
-      {quotationCustomerId&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>setQuoteFor(customers.find(item=>item.id===quotationCustomerId)||null)}><FilePlus size={14}/> New quotation</button>}
+      {newCustomer&&<form className="inline-ai-new-customer" onSubmit={event=>{event.preventDefault();void addCustomer();}}>
+        <p>{newCustomer.email||'This sender'} is not a customer yet. Add them to make a quotation.</p>
+        <label>Company or customer name<input aria-label="New customer name" required value={newCustomer.name} onChange={event=>setNewCustomer({...newCustomer,name:event.target.value})} placeholder="e.g. Front Street Offices"/></label>
+        <label>Contact name<input aria-label="New customer contact" value={newCustomer.contact} onChange={event=>setNewCustomer({...newCustomer,contact:event.target.value})}/></label>
+        <label>Email<input aria-label="New customer email" type="email" value={newCustomer.email} onChange={event=>setNewCustomer({...newCustomer,email:event.target.value})}/></label>
+        <div className="btns"><button type="submit" className="primary compact" disabled={!!busy||!newCustomer.name.trim()}>{busy==='customer'?'Adding…':'Add customer and make quotation'}</button><button type="button" className="secondary compact" onClick={()=>setNewCustomer(null)}>Cancel</button></div>
+      </form>}
       {quotations&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotations.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotations.length?'Choose a quotation PDF':'No saved quotations'}</option>{quotations.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} - {quote.status}</option>)}</select>}
       {files.map((file,index)=><span className="inline-ai-file" key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>setFiles(old=>old.filter((_,i)=>i!==index))}><X size={12}/></button></span>)}
       {files.length>1&&<small className="inline-ai-file-total">{files.length} files · {totalKb>1024?`${(totalKb/1024).toFixed(1)} MB`:`${totalKb} KB`} of 25 MB</small>}
