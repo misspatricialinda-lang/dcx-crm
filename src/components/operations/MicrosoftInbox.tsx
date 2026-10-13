@@ -210,6 +210,22 @@ function MicrosoftInbox({
   const [updated, setUpdated] = useState("");
   const [compose, setCompose] = useState(false);
   const ribbonRef = useRef<HTMLDivElement>(null);
+  // Like Outlook, the mailbox fills the window and the folders, list and email each scroll on their own.
+  const shellRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const fit = () => {
+      if (window.innerWidth <= 640) { shell.style.removeProperty('--mail-shell-height'); return; }
+      const top = shell.getBoundingClientRect().top + window.scrollY;
+      shell.style.setProperty('--mail-shell-height', `${Math.max(480, window.innerHeight - top - 12)}px`);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    if (ribbonRef.current) observer.observe(ribbonRef.current);
+    window.addEventListener('resize', fit);
+    return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
+  }, [error]);
   useEffect(() => {
     const ribbon = ribbonRef.current;
     const workspace = ribbon?.closest<HTMLElement>('.mail-workspace');
@@ -628,7 +644,7 @@ function MicrosoftInbox({
               : "Loading mailbox…"}
         </span>
       </div>
-      <div className={`outlook-shell${phoneReading && openId ? ' phone-reading' : ''}`}>
+      <div ref={shellRef} className={`outlook-shell${phoneReading && openId ? ' phone-reading' : ''}`}>
         <aside className="mail-folders">
           <MailAccountMenu mailbox={mailbox} provider={provider} />
           <button

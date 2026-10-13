@@ -38,11 +38,18 @@ test('quotation tax is editable and immediately recalculates the total',async({p
 test('customer deletion retains a recoverable customer record',async({page})=>{
   await preview(page);await page.getByRole('button',{name:'Customers',exact:true}).click();
   const card=page.locator('.crm-customer').first();const name=await card.locator('h2').textContent();
-  page.on('dialog',dialog=>dialog.accept());await card.getByRole('button',{name:'Delete customer',exact:true}).click();
+  await card.getByRole('button',{name:'Delete customer',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:`Delete ${name}`});
+  await expect(dialog.getByText(/This customer has/)).toBeVisible();
+  await expect(dialog.getByRole('radio',{name:/Move to Deleted customers/})).toBeChecked();
+  await expect(dialog.getByRole('radio',{name:/keep the quotations/})).toBeVisible();
+  await expect(dialog.getByRole('radio',{name:/including the quotations/})).toBeVisible();
+  await dialog.getByRole('button',{name:'Move to Deleted customers'}).click();
   await expect(page.locator('.crm-customer').filter({has:page.getByRole('heading',{name:name!,exact:true})})).toHaveCount(0);
   await page.getByRole('button',{name:'Deleted customers',exact:true}).click();
   const deleted=page.locator('.crm-customer').filter({has:page.getByRole('heading',{name:name!,exact:true})});
-  await expect(deleted).toBeVisible();await deleted.getByRole('button',{name:'Restore',exact:true}).click();
+  await expect(deleted).toBeVisible();await expect(deleted.getByRole('button',{name:'Delete permanently'})).toBeVisible();
+  await deleted.getByRole('button',{name:'Restore',exact:true}).click();
   await page.getByRole('button',{name:'Active customers',exact:true}).click();
   await expect(page.getByRole('heading',{name:name!,exact:true})).toBeVisible();
 });

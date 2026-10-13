@@ -487,7 +487,7 @@ function Dashboard({
                 )}
               />
             )}
-            {tab === "quotations" && <QuotationLanding preview={preview} data={data} onLoaded={setCloudCustomers} onAddCustomer={() => navigate('customers', 'new')} />}
+            {tab === "quotations" && <QuotationLanding preview={preview} data={data} onLoaded={setCloudCustomers} />}
             {tab === "calculator" && (
               <>
               {!preview && ratesState !== 'ready' && <p role="status" className="notice amber">{ratesState === 'loading' ? 'Loading shared rates...' : 'Shared rates are unavailable. These are cached estimates; quotation approval is paused.'}</p>}

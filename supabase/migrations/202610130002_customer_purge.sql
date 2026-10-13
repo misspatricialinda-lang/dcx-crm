@@ -1,4 +1,4 @@
--- Permanent customer deletion. A customer must be in Deleted customers first.
+-- Permanent customer deletion, from the active list or from Deleted customers (the owner confirms in a dialog).
 -- Quotations and proposals are business records: by default they are kept, detached from the
 -- removed customer with a snapshot of who it was, and listed as archived quotations until the
 -- owner deletes them. Email conversations stay in the mailbox and lose only their customer link.
@@ -20,7 +20,6 @@ declare
 begin
   select * into c from public.crm_customers where id = p_id for update;
   if not found then return jsonb_build_object('ok', false, 'reason', 'Customer not found. Reload the list.'); end if;
-  if c.deleted_at is null then return jsonb_build_object('ok', false, 'reason', 'Move the customer to Deleted customers before deleting it permanently.'); end if;
   if date_trunc('milliseconds', c.updated_at) <> date_trunc('milliseconds', p_updated_at) then return jsonb_build_object('ok', false, 'reason', 'Customer changed. Reload it.'); end if;
   snapshot := jsonb_build_object('id', c.id, 'name', c.name, 'contact', c.contact, 'email', c.email, 'phone', c.phone,
     'billing_address', c.billing_address, 'price_book', c.price_book, 'removed_at', now());

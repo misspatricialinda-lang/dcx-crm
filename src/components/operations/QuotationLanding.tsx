@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Archive, ArrowLeft, Download, Plus, Search, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, Download, Search, Trash2 } from 'lucide-react';
 import { crmRequest, toClient } from '../../lib/crm-client';
 import { cad, exportCustomerQuotation, type CustomerQuotation } from '../../lib/customer-quotation';
 import type { Client, Workspace } from '../../types/operations';
@@ -15,7 +15,7 @@ function routeFromHash() {
   return page === 'quotations' ? decodeURIComponent(sub) : '';
 }
 
-export function QuotationLanding({ preview, data, onLoaded, onAddCustomer }: { preview: boolean; data: Workspace; onLoaded: (customers: Client[]) => void; onAddCustomer: () => void }) {
+export function QuotationLanding({ preview, data, onLoaded }: { preview: boolean; data: Workspace; onLoaded: (customers: Client[]) => void }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [route, setRoute] = useState(routeFromHash);
   const [search, setSearch] = useState('');
@@ -52,10 +52,10 @@ export function QuotationLanding({ preview, data, onLoaded, onAddCustomer }: { p
     </> : route && loading ? <p role="status">Loading customer…</p>
     : <>
       {route && !loading && <p className="notice amber" role="alert">That customer is no longer available. Choose another customer.</p>}
-      <div className="toolbar"><button className="primary" onClick={onAddCustomer}><Plus size={15}/> Add customer</button>{!preview && <button className="secondary" onClick={() => go('archived')}><Archive size={15}/> Archived quotations</button>}</div>
+      {!preview && <div className="toolbar quotation-toolbar"><button className="secondary" onClick={() => go('archived')}><Archive size={15}/> Archived quotations</button></div>}
       {error && <p className="notice amber" role="alert">{error}</p>}
       <div className="search-field"><Search size={15}/><input aria-label="Search customers for quotations" placeholder="Search customers, contacts or email" value={search} onChange={event => setSearch(event.target.value)}/></div>
-      {loading ? <p role="status">Loading customers…</p> : !visible.length ? <div className="empty-state"><h2>{customers.length ? 'No matching customers' : 'No customers yet'}</h2><p>{customers.length ? 'Try another search.' : 'Add a customer to create their first quotation.'}</p></div> : <div className="customer-grid crm-cards">{visible.map(customer => <section className="panel crm-customer" key={customer.id}><h2>{customer.name}</h2><p>{customer.contact || customer.email || customer.phone || 'Add contact details'}</p><div className="button-row"><button className="secondary compact" onClick={() => choose(customer, false)}>View quotations</button><button className="primary compact" onClick={() => choose(customer, true)}>New quotation</button></div></section>)}</div>}
+      {loading ? <p role="status">Loading customers…</p> : !visible.length ? <div className="empty-state"><h2>{customers.length ? 'No matching customers' : 'No customers yet'}</h2><p>{customers.length ? 'Try another search.' : 'Add customers on the Customers page, then create their quotations here.'}</p></div> : <div className="customer-grid crm-cards">{visible.map(customer => <section className="panel crm-customer" key={customer.id}><h2>{customer.name}</h2><p>{customer.contact || customer.email || customer.phone || 'Add contact details'}</p><div className="button-row"><button className="secondary compact" onClick={() => choose(customer, false)}>View quotations</button><button className="primary compact" onClick={() => choose(customer, true)}>New quotation</button></div></section>)}</div>}
     </>}
   </>;
 }
