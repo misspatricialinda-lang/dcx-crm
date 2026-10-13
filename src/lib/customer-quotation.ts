@@ -86,8 +86,13 @@ export async function buildCustomerQuotationPdf(q: CustomerQuotation, logo: stri
   if (q.status === 'draft') { doc.setTextColor(160, 40, 40); doc.setFontSize(9); doc.text('DRAFT - NOT ISSUED', 580, 765, { align: 'right' }); }
   return doc;
 }
+// Named the way Raza names quotes he sends: "DCX Technical Inc Quote 4037 - BGIS.pdf".
+export function quotationFileName(q: Pick<CustomerQuotation, 'estimate_number' | 'recipient_snapshot'>) {
+  const customer = String(q.recipient_snapshot?.name || '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return `DCX Technical Inc Quote ${q.estimate_number}${customer ? ` - ${customer}` : ''}.pdf`;
+}
 export async function exportCustomerQuotation(q: CustomerQuotation) {
   const logo = await quotationLogo();
   const doc = await buildCustomerQuotationPdf(q, logo);
-  doc.save(`DCX-Estimate-${q.estimate_number}.pdf`);
+  doc.save(quotationFileName(q));
 }

@@ -380,3 +380,4 @@
 }
 @media(min-width:641px) and (max-width:1000px){.outlook-shell{grid-template-rows:auto minmax(0,1fr)}.outlook-shell>.mail-folders{overflow:visible}}
 .quotation-toolbar{justify-content:flex-end}
+.inline-quote-modal{max-width:1100px;width:min(1100px,96vw)}.inline-ai-notice .text-button{margin-left:8px}

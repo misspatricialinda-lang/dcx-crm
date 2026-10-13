@@ -4,7 +4,7 @@ import { Mail, Paperclip, RefreshCw, Search, Send, Sparkles, Save, X } from 'luc
 import type { Client } from '../../types/operations';
 import { trackingRequest } from '../../lib/email-tracking';
 import { crmRequest } from '../../lib/crm-client';
-import { buildCustomerQuotationPdf, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
+import { buildCustomerQuotationPdf, quotationFileName, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
 
 type Draft = { id:string; thread_id:string; current_body:string; original_ai_body:string|null; to_addresses:string[]; status:string; updated_at:string; deleted_at?:string|null };
 type Thread = { id:string; subject:string; status:string; priority:string; last_message_at:string; customer_id:string|null; has_attachments?:boolean; sender?:string; preview?:string; draft:Draft };
@@ -119,7 +119,7 @@ export function TrackedInbox({focusId,customers,onSent,initialTrash=false,trashO
   }
   async function attachQuotation(quote:CustomerQuotation) {
     setQuotationBusy(true);setError('');
-    try {const pdf=await buildCustomerQuotationPdf(quote,await quotationLogo());addFileObjects([new File([pdf.output('blob')],`DCX-Estimate-${quote.estimate_number}.pdf`,{type:'application/pdf'})]);setQuotationOptions(null);}
+    try {const pdf=await buildCustomerQuotationPdf(quote,await quotationLogo());addFileObjects([new File([pdf.output('blob')],quotationFileName(quote),{type:'application/pdf'})]);setQuotationOptions(null);}
     catch(cause){setError((cause as Error).message);}finally{setQuotationBusy(false);}
   }
   async function expandMessage(message:Message) {

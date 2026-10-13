@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, MailX, MessageSquare, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowRight, FilePlus, MailX, MessageSquare, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import type { Client } from '../../types/operations';
 import { trackingRequest } from '../../lib/email-tracking';
 import { crmRequest } from '../../lib/crm-client';
 import { attachmentLimitError, uploadAttachment } from '../../lib/microsoft-mail';
 import { SignatureField } from './EmailSignature';
-import { buildCustomerQuotationPdf, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
+import { buildCustomerQuotationPdf, quotationFileName, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
+import { CustomerQuotations } from './CustomerQuotations';
 
 type Draft = { id:string; thread_id:string; current_body:string; original_ai_body:string|null; to_addresses:string[]; status:string; updated_at:string };
 export type ReplyOutcome = 'sent' | 'discarded' | 'changed';
@@ -19,6 +20,18 @@ async function assistant<T>(query:string, body?:unknown):Promise<T> {
 }
 const quickChanges = ['Shorter', 'More formal', 'Friendlier', 'Fix grammar'];
 const addressesIn = (value:string) => value.split(/[;,\s]+/).map(item => item.trim()).filter(Boolean);
+// Raza's cover note for a quote (from his sent mail): greeting, "see attached quote for…", a PO request
+// for parts orders, "Kindly review…", "Thank you,". Prices stay in the PDF.
+function coverNoteInstruction(quote:CustomerQuotation){
+  const hour=Number(new Intl.DateTimeFormat('en-CA',{hour:'numeric',hourCycle:'h23',timeZone:'America/Toronto'}).format(new Date()));
+  const greeting=hour<12?'Good Morning':hour<17?'Good Afternoon':'Good Evening';
+  const items=quote.items.slice(0,12).map(item=>`${item.product_service}${item.description?` (${item.description.slice(0,120)})`:''} x ${item.quantity}`).join('; ');
+  return [`Quotation PDF "${quotationFileName(quote)}" is attached to this reply. It covers: ${items}.`,
+    `Rewrite the reply as Raza's usual short cover note for a quote: start with "${greeting} <first name of the person writing to us>,", then a sentence like "Please see attached quote for <what the quote covers, in plain words>."`,
+    'If the quote is for batteries, parts or equipment DCX has to order, add "Please provide PO so I can order <the items>."',
+    'Keep at most one or two short sentences from the current draft that answer something the customer asked. Then "Kindly review and let me know if you have any questions or concerns." and end with "Thank you,".',
+    'Do not write any prices, totals, taxes or costs in the email; they are in the attached PDF.'].join(' ');
+}
 const validAddress = (value:string) => /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(value);
 
 // The AI reply for one conversation, edited in place above the email like an Outlook inline reply.
@@ -37,6 +50,9 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   const chatEnd=useRef<HTMLDivElement>(null);
   const [quotationCustomerId,setQuotationCustomerId]=useState(customerId||''), [quotations,setQuotations]=useState<CustomerQuotation[]|null>(null);
   const editor=useRef<HTMLTextAreaElement>(null);
+  // "New quotation" opens the quotation editor here; a saved quote is attached and the draft becomes a cover note.
+  const [quoteFor,setQuoteFor]=useState<Client|null>(null);
+  const [undoBody,setUndoBody]=useState<{body:string;label:string}|null>(null);
   const dirty=!!draft&&body!==savedBody;
   useEffect(()=>{onDirty(dirty);},[dirty]);
   useEffect(()=>()=>onDirty(false),[]);
@@ -53,7 +69,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   // A new email resets the panel; the mailbox's minute refresh only reloads quietly and never replaces unsaved edits.
   const shownFor=useRef<string>();
   useEffect(()=>{
-    if(shownFor.current!==internetId){shownFor.current=internetId;setLoaded(false);setNotice('');setFiles([]);setQuotations(null);setChat([]);setCc('');setBcc('');setShowCc(false);setShowBcc(false);void load();}
+    if(shownFor.current!==internetId){shownFor.current=internetId;setLoaded(false);setNotice('');setFiles([]);setQuotations(null);setChat([]);setUndoBody(null);setQuoteFor(null);setCc('');setBcc('');setShowCc(false);setShowBcc(false);void load();}
     else if(!dirty&&!busy)void load(true);
   },[internetId,revision]);
   useEffect(()=>{const node=editor.current;if(node){node.style.height='auto';node.style.height=`${Math.max(node.scrollHeight,90)}px`;}},[body,draft?.id]);
@@ -74,7 +90,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     finally{setBusy('');}
   }
   const save=()=>workflow('save',{body_text:body,body_html:''});
-  async function rewrite(text:string){if(!text.trim())return;if(dirty&&!await save())return;await workflow('rewrite',{instruction:text});}
+  async function rewrite(text:string){if(!text.trim())return null;if(dirty&&!await save())return null;return workflow('rewrite',{instruction:text});}
   // One box for both: questions are answered from this person's past emails and customer record;
   // instructions change the draft.
   async function ask(text:string){
@@ -140,8 +156,18 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   }
   async function attachQuotation(quote:CustomerQuotation){
     setBusy('quotation');setError('');
-    try{const pdf=await buildCustomerQuotationPdf(quote,await quotationLogo());addFiles([new File([pdf.output('blob')],`DCX-Estimate-${quote.estimate_number}.pdf`,{type:'application/pdf'})]);setQuotations(null);}
+    let attached=false;
+    try{
+      const pdf=await buildCustomerQuotationPdf(quote,await quotationLogo());
+      const name=quotationFileName(quote);
+      if(files.some(file=>file.name===name)){setNotice(`${name} is already attached.`);return;}
+      addFiles([new File([pdf.output('blob')],name,{type:'application/pdf'})]);setQuotations(null);attached=true;
+    }
     catch(cause){setError((cause as Error).message);}finally{setBusy('');}
+    if(!attached)return;
+    // Turn the draft into a cover note for the attached quote; the previous text can be restored.
+    const before=body;
+    if(await rewrite(coverNoteInstruction(quote))){setUndoBody({body:before,label:`Quote ${quote.estimate_number}`});setNotice(`Quote ${quote.estimate_number} attached and the reply rewritten as a cover note. Prices stay in the PDF.`);}
   }
 
   if(!loaded)return <section className="inline-ai-reply loading"><Sparkles size={15}/> Checking for an AI reply…</section>;
@@ -154,11 +180,15 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   </section>;
   const totalKb=Math.ceil(files.reduce((sum,file)=>sum+file.size,0)/1024);
   return <section className="inline-ai-reply" aria-label="AI draft reply">
+    {quoteFor&&<div className="modal-backdrop"><section className="detail-modal inline-quote-modal" role="dialog" aria-modal="true" aria-label={`Quotations for ${quoteFor.name}`}>
+      <div className="panel-heading"><div><h2>Quotation for {quoteFor.name}</h2><p className="small muted">Save the quotation and it is attached to this reply as a PDF.</p></div><button type="button" className="text-button" onClick={()=>setQuoteFor(null)}><X size={16}/> Close</button></div>
+      <CustomerQuotations customer={{id:quoteFor.id,name:quoteFor.name,contact:quoteFor.contact,email:quoteFor.email,billing_address:quoteFor.billingAddress}} preview={false} createNow onCreated={()=>{}} onSaved={record=>{setQuoteFor(null);void attachQuotation(record);}}/>
+    </section></div>}
     <header><strong><Sparkles size={15}/> Draft reply</strong><span className={dirty?'unsaved':''}>{['rewrite','regenerate','assist'].includes(busy)?'AI is working…':dirty?'Unsaved changes':'Ready to review'}</span></header>
     <div className="inline-ai-to"><span>To: {draft.to_addresses.join(', ')}</span>{!showCc&&<button type="button" className="text-button" onClick={()=>setShowCc(true)}>Cc</button>}{!showBcc&&<button type="button" className="text-button" onClick={()=>setShowBcc(true)}>Bcc</button>}</div>
     {showCc&&<label className="inline-ai-copy"><span>Cc</span><input aria-label="Cc recipients" placeholder="name@company.com, another@company.com" value={cc} onChange={event=>setCc(event.target.value)} disabled={!!busy}/><button type="button" className="text-button" aria-label="Remove Cc" onClick={()=>{setCc('');setShowCc(false);}}><X size={13}/></button></label>}
     {showBcc&&<label className="inline-ai-copy"><span>Bcc</span><input aria-label="Bcc recipients" placeholder="name@company.com" value={bcc} onChange={event=>setBcc(event.target.value)} disabled={!!busy}/><button type="button" className="text-button" aria-label="Remove Bcc" onClick={()=>{setBcc('');setShowBcc(false);}}><X size={13}/></button></label>}
-    {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status" className="inline-ai-notice">{notice}</p>}
+    {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status" className="inline-ai-notice">{notice}{undoBody&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>{setBody(undoBody.body);setUndoBody(null);setNotice('Previous text restored. The quote is still attached; remove it below if needed.');}}><Undo2 size={13}/> Undo rewrite</button>}</p>}
     <div className="reply-canvas" onClick={event=>{if(event.target===event.currentTarget)editor.current?.focus();}}>
       <textarea ref={editor} aria-label="Edit AI reply draft" value={body} onChange={event=>setBody(event.target.value)} disabled={!!busy}/>
       <SignatureField key={draft.id} onChange={setSignatureHtml} disabled={!!busy}/>
@@ -173,6 +203,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
       <label className="text-button"><Paperclip size={14}/> Attach files<input type="file" multiple hidden onChange={event=>{if(event.target.files)addFiles(Array.from(event.target.files));event.target.value='';}} disabled={!!busy}/></label>
       <select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotations(null);}}><option value="">Attach a quotation for…</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
       {quotationCustomerId&&!quotations&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>void loadQuotations()}>{busy==='quotation'?'Loading…':'Choose quotation'}</button>}
+      {quotationCustomerId&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>setQuoteFor(customers.find(item=>item.id===quotationCustomerId)||null)}><FilePlus size={14}/> New quotation</button>}
       {quotations&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotations.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotations.length?'Choose a quotation PDF':'No saved quotations'}</option>{quotations.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} - {quote.status}</option>)}</select>}
       {files.map((file,index)=><span className="inline-ai-file" key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>setFiles(old=>old.filter((_,i)=>i!==index))}><X size={12}/></button></span>)}
       {files.length>1&&<small className="inline-ai-file-total">{files.length} files · {totalKb>1024?`${(totalKb/1024).toFixed(1)} MB`:`${totalKb} KB`} of 25 MB</small>}

@@ -5,7 +5,7 @@ import { buildCustomerQuotationPdf, cad, exportCustomerQuotation, lineCents, quo
 
 const blankRow = (): QuotationItem => ({ id: crypto.randomUUID(), product_service: '', description: '', quantity: 1, unit_price: '' });
 
-export function CustomerQuotations({ customer, preview, createNow, onCreated }: { customer: Record<string, any>; preview: boolean; createNow: boolean; onCreated: () => void }) {
+export function CustomerQuotations({ customer, preview, createNow, onCreated, onSaved }: { customer: Record<string, any>; preview: boolean; createNow: boolean; onCreated: () => void; onSaved?: (record: CustomerQuotation) => void }) {
   const [records, setRecords] = useState<CustomerQuotation[]>([]);
   const [editing, setEditing] = useState<CustomerQuotation | null | 'new'>(createNow ? 'new' : null);
   const [items, setItems] = useState<QuotationItem[]>([blankRow()]);
@@ -80,6 +80,7 @@ export function CustomerQuotations({ customer, preview, createNow, onCreated }: 
       });
       setRecords(rows => [record, ...rows.filter(q => q.id !== record.id)]);
       setEditing(null); setDirty(false);
+      onSaved?.(record);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }

@@ -43,7 +43,8 @@ import {
 } from "../../lib/microsoft-mail";
 import { useMailConnection, MailConnectionCard, MailAccountMenu } from "./MailConnection";
 import { crmRequest } from '../../lib/crm-client';
-import { buildCustomerQuotationPdf, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
+import { SHOW_SUBFOLDERS } from "../../lib/features";
+import { buildCustomerQuotationPdf, quotationFileName, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
 import type { MailProviderName } from "./MailConnection";
 
 function formatMailListDate(message: MicrosoftMessage) {
@@ -696,7 +697,7 @@ function MicrosoftInbox({
                 <span>{f.displayName}</span>
                 {f.unreadItemCount > 0 && <b>{f.unreadItemCount}</b>}
               </button>
-              {f.childFolderCount > 0 && (
+              {SHOW_SUBFOLDERS && f.childFolderCount > 0 && (
                 <button
                   aria-label={`Show folders in ${f.displayName}`}
                   onClick={() => expandFolder(f)}
@@ -1727,7 +1728,7 @@ function DraftEditor({
     setQuotationBusy(true); setError('');
     try {
       const pdf = await buildCustomerQuotationPdf(quote, await quotationLogo());
-      const file = new File([pdf.output('blob')], `DCX-Estimate-${quote.estimate_number}.pdf`, { type: 'application/pdf' });
+      const file = new File([pdf.output('blob')], quotationFileName(quote), { type: 'application/pdf' });
       const limit = attachmentLimitError([...files, file]); if (limit) throw new Error(limit);
       setFiles(current => [...current, file]); setQuotationOptions(null); change();
     } catch (cause) { setError((cause as Error).message); }
