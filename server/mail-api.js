@@ -6,6 +6,11 @@ import { hostingerConfigured, hostingerConfiguration, hostingerMailHandler } fro
 import { createClient } from '@supabase/supabase-js';
 import { bannerAttachment, customSignatureHtml, insertSignature, loadSignature, SIGNATURE_CID, textToHtml } from './email-signature.js';
 
+// Attachments: any number of files, up to MAX_TOTAL_ATTACHMENT_BYTES per email, the common limit
+// of Gmail and most providers (Outlook allows up to 150 MB per file through upload sessions).
+export const MAX_ATTACHMENT_BYTES = 150 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES = 8 * 327680; // 2.5 MB, a multiple of 320 KB as Microsoft recommends
+const uploadUrlAllowed = value => { try { const url = new URL(value); return url.protocol === 'https:' && /(^|\.)(outlook\.office\.com|outlook\.office365\.com|graph\.microsoft\.com|outlook\.live\.com)$/.test(url.hostname); } catch { return false; } };
 const fields = 'id,internetMessageId,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,lastModifiedDateTime,isRead,isDraft,importance,flag,hasAttachments,parentFolderId,webLink,changeKey';
 // Prevent parallel/repeated dispatch in one warm instance. Microsoft is still authoritative;
 // a durable dispatch ledger is required before supporting multiple send workers.
@@ -130,7 +135,7 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         res.statusCode = 200; return res.end(data);
       }
     } else {
-      const input = await readBody(req, action === 'attach' ? 4300000 : 100000);
+      const input = await readBody(req, ['attach', 'upload-chunk'].includes(action) ? 4300000 : 100000);
       if (action === 'read') {
         if (typeof input.isRead !== 'boolean') throw new MailError(400, 'Read state is required.');
         await graph(`/messages/${segment(input.id)}`, { method: 'PATCH', body: { isRead: input.isRead } }); return respond(res, 200, { ok: true });
@@ -182,6 +187,32 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
         await graph(`/messages/${id}/attachments`, { method: 'POST', body: { '@odata.type': '#microsoft.graph.fileAttachment', name: input.name.trim(), contentType: input.contentType || 'application/octet-stream', contentBytes: input.contentBytes } });
         const updated = await graph(`/messages/${id}?$select=id,isDraft,changeKey,hasAttachments`);
         return respond(res, 200, { version: version(updated), hasAttachments: updated.hasAttachments });
+      }
+      // Files of 3 MB or more go to Outlook through an upload session, one chunk per request, so no
+      // single request exceeds the hosting body limit. The session URL stays sealed on the server side.
+      if (action === 'upload-session') {
+        const id = segment(input.id);
+        const size = Number(input.size);
+        if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 200 || /[\r\n]/.test(input.name) || !Number.isSafeInteger(size) || size < 3 * 1024 * 1024 || size > MAX_ATTACHMENT_BYTES || (input.contentType !== undefined && (typeof input.contentType !== 'string' || input.contentType.length > 200))) throw new MailError(400, 'Invalid attachment.');
+        const current = await graph(`/messages/${id}?$select=id,isDraft`);
+        if (!current.isDraft) throw new MailError(409, 'This message is no longer a draft.');
+        const session = await graph(`/messages/${id}/attachments/createUploadSession`, { method: 'POST', body: { AttachmentItem: { attachmentType: 'file', name: input.name.trim(), size, contentType: input.contentType || 'application/octet-stream' } } });
+        if (!uploadUrlAllowed(session?.uploadUrl)) throw new MailError(502, 'Microsoft did not start the upload. Try again.');
+        return respond(res, 200, { upload: seal({ kind: 'upload', url: session.uploadUrl, size }, env) });
+      }
+      if (action === 'upload-chunk') {
+        const session = unseal(input.upload, 'upload', env);
+        const offset = Number(input.offset);
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset >= session.size || typeof input.contentBytes !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(input.contentBytes)) throw new MailError(400, 'Invalid upload chunk.');
+        const bytes = Buffer.from(input.contentBytes, 'base64');
+        if (!bytes.length || bytes.length > UPLOAD_CHUNK_BYTES || offset + bytes.length > session.size) throw new MailError(400, 'Invalid upload chunk.');
+        let response;
+        try {
+          // Upload session URLs are pre-authorized; Microsoft rejects an Authorization header on them.
+          response = await (env.UPLOAD_TRANSPORT || fetch)(session.url, { method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(60000), headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.length), 'Content-Range': `bytes ${offset}-${offset + bytes.length - 1}/${session.size}` }, body: bytes });
+        } catch { throw new MailError(502, 'The upload to Microsoft was interrupted. Try sending again.'); }
+        if (!response.ok) throw new MailError(502, 'Microsoft rejected part of the attachment. The file may be larger than this mailbox allows.');
+        return respond(res, 200, { received: offset + bytes.length, complete: offset + bytes.length >= session.size });
       }
       if (action === 'review') {
         const record = await graph(`/messages/${segment(input.id)}?$select=${fields},body`, { text: true });

@@ -42,6 +42,7 @@ test('follow-ups folder, conversation tag and the follow-up bar actions', async 
   await expect(folder).toContainText('1');
   await folder.click();
   await expect(page.getByText('1 due · 0 upcoming')).toBeVisible();
+  await page.locator('.thread-item', { hasText: 'Battery quote' }).click();
   const bar = page.locator('.followup-bar');
   await expect(bar).toContainText('Follow-up due');
   await expect(bar).toContainText('Quotation sent, no reply yet');

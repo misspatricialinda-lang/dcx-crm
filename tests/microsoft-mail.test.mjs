@@ -488,3 +488,24 @@ test("uncertain sends cannot be immediately re-dispatched in the same server ins
   );
   assert.equal(sends, 1);
 });
+test("large attachments upload to Outlook in chunks through a sealed upload session", async (t) => {
+  const puts = [];
+  const transport = async (url, options) => { puts.push({ url, options }); return { ok: true, status: 200 }; };
+  const f = await fixture(t, async (path, options = {}) => {
+    if (path.endsWith('/createUploadSession')) { assert.equal(options.body.AttachmentItem.size, 6000000); return { uploadUrl: 'https://outlook.office.com/api/v2.0/Users/x/Messages/draft-1/AttachmentSessions/abc?authtoken=t' }; }
+    return { id: 'draft-1', isDraft: true };
+  }, { ...env, UPLOAD_TRANSPORT: transport });
+  const started = await f.post('upload-session', { id: 'draft-1', name: 'drawing.pdf', size: 6000000, contentType: 'application/pdf' });
+  assert.equal(started.status, 200);
+  const { upload } = await started.json();
+  assert.ok(!upload.includes('outlook.office.com'), 'upload URL is sealed, not exposed');
+  const chunk = Buffer.alloc(2621440, 1).toString('base64');
+  const first = await f.post('upload-chunk', { upload, offset: 0, contentBytes: chunk });
+  assert.equal(first.status, 200);
+  assert.equal(puts[0].options.headers['Content-Range'], 'bytes 0-2621439/6000000');
+  assert.equal(puts[0].options.headers.Authorization, undefined);
+  const tampered = await f.post('upload-chunk', { upload: upload.slice(0, -2) + 'xx', offset: 0, contentBytes: chunk });
+  assert.equal(tampered.status, 400);
+  const small = await f.post('upload-session', { id: 'draft-1', name: 'tiny.pdf', size: 1000 });
+  assert.equal(small.status, 400, 'small files use the direct attach action');
+});

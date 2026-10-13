@@ -2,12 +2,13 @@ import { createClient } from '@supabase/supabase-js';
 import { configuration, getSession } from './auth-core.js';
 import { n8nConfig } from './n8n-config.js';
 import { cleanSignatureFields, signatureHtml, signatureRows } from './email-signature.js';
-import { sendAiDraft } from './draft-send.js';
+import { discardPreparedReply, prepareAiReply, sendAiDraft } from './draft-send.js';
 import { delegatedGraphClient } from './microsoft-oauth.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
 const actionable = draft => draft && !draft.deleted_at && !['sent', 'sending', 'submitted', 'uncertain'].includes(draft.status) && !!draft.original_ai_body;
 const reply = (res, status, value) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)); };
+const emailList = value => Array.isArray(value) && value.length <= 20 && value.every(item => typeof item === 'string' && item.length <= 320 && /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(item));
 const checked = async query => { const { data, error } = await query; if (error) throw error; return data; };
 
 async function bodyOf(req) {
@@ -105,13 +106,30 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       const result=await checked(db.rpc('crm_draft_trash',{p_id:input.draft_id,p_updated_at:input.updated_at,p_restore:input.action==='restore',p_actor:session.email}));
       return reply(res,200,{success:true,...result});
     }
-    if (!input || typeof input !== 'object' || !['rewrite', 'regenerate', 'save', 'send'].includes(input.action) || !uuid(input.thread_id) || !uuid(input.draft_id)) return reply(res, 400, { error: 'Invalid AI reply request.' });
+    // Large files are uploaded into an Outlook reply prepared before the send (see /api/mail upload-session).
+    if (['prepare-send','discard-staged'].includes(input?.action)) {
+      const connected = injected.graph ? { graph: injected.graph } : await delegatedGraphClient(env);
+      if (!connected) return reply(res, 503, { error: 'Connect the Outlook mailbox before sending.' });
+      if (input.action === 'discard-staged') {
+        if (typeof input.reply_id !== 'string' || !input.reply_id || input.reply_id.length > 2048) return reply(res, 400, { error: 'Invalid prepared reply.' });
+        const result = await discardPreparedReply({ graph: connected.graph, replyId: input.reply_id });
+        return reply(res, result.status, result.body);
+      }
+      if (!uuid(input.draft_id) || !uuid(input.thread_id)) return reply(res, 400, { error: 'Invalid AI reply request.' });
+      const result = await prepareAiReply({ db, graph: connected.graph, draftId: input.draft_id, threadId: input.thread_id });
+      return reply(res, result.status, result.body);
+    }
+    if (!input || typeof input !== 'object' || !['rewrite', 'regenerate', 'save', 'send', 'assist'].includes(input.action) || !uuid(input.thread_id) || !uuid(input.draft_id)) return reply(res, 400, { error: 'Invalid AI reply request.' });
     const draft = await checked(db.from('email_drafts').select('id,thread_id,status,original_ai_body,deleted_at').eq('id', input.draft_id).eq('thread_id', input.thread_id).maybeSingle());
     if (!actionable(draft) && !(input.action==='regenerate' && draft && !draft.deleted_at && draft.status==='editing' && !draft.original_ai_body)) return reply(res, 409, { error: 'The AI draft is no longer ready for review.' });
+    if (input.action === 'assist' && (typeof input.instruction !== 'string' || !input.instruction.trim() || input.instruction.length > 4000)) return reply(res, 400, { error: 'Ask a question or tell the AI what to change.' });
     if (input.action === 'rewrite' && (typeof input.instruction !== 'string' || !input.instruction.trim() || input.instruction.length > 4000)) return reply(res, 400, { error: 'Enter an instruction for the AI.' });
     if (input.action === 'save' && (typeof input.body_text !== 'string' || !input.body_text.trim() || input.body_text.length > 50000)) return reply(res, 400, { error: 'Draft body is missing or too long.' });
     if (input.action === 'send') {
-      if (!Array.isArray(input.attachments) || input.attachments.length > 5 || input.attachments.some(file => !file || typeof file.name !== 'string' || !file.name.trim() || file.name.length > 200 || typeof file.content_type !== 'string' || typeof file.content_base64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.content_base64) || file.content_base64.length > 4 * 1024 * 1024) || input.attachments.reduce((size, file) => size + file.content_base64.length, 0) > 4 * 1024 * 1024) return reply(res, 400, { error: 'Attach up to five files, with a combined size under 3 MB.' });
+      if (input.staged_reply_id !== undefined && (typeof input.staged_reply_id !== 'string' || !input.staged_reply_id || input.staged_reply_id.length > 2048)) return reply(res, 400, { error: 'Invalid prepared reply.' });
+      if ((input.cc !== undefined && !emailList(input.cc)) || (input.bcc !== undefined && !emailList(input.bcc))) return reply(res, 400, { error: 'Enter valid Cc and Bcc email addresses (up to 20 each).' });
+      // Files normally arrive through the prepared reply; inline attachments remain for small files.
+      if (!Array.isArray(input.attachments) || input.attachments.some(file => !file || typeof file.name !== 'string' || !file.name.trim() || file.name.length > 200 || typeof file.content_type !== 'string' || typeof file.content_base64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.content_base64) || file.content_base64.length > 4 * 1024 * 1024) || input.attachments.reduce((size, file) => size + file.content_base64.length, 0) > 4 * 1024 * 1024) return reply(res, 400, { error: 'Attachments could not be sent in one request. Reload the page and try again.' });
     }
     // Sending runs here through Microsoft Graph; n8n is used only to write and rewrite drafts.
     if (input.action === 'send') {
@@ -119,13 +137,14 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       if (input.signature_html !== undefined && (typeof input.signature_html !== 'string' || input.signature_html.length > 20000)) return reply(res, 400, { error: 'The signature is too long.' });
       const connected = injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await delegatedGraphClient(env);
       if (!connected) return reply(res, 503, { error: 'Connect the Outlook mailbox before sending.' });
-      const result = await sendAiDraft({ db, graph: connected.graph, mailbox: connected.connection.email_address, draftId: draft.id, updatedAt: input.updated_at, attachments: input.attachments, actor: session.email, signatureHtml: input.signature_html });
+      const result = await sendAiDraft({ db, graph: connected.graph, mailbox: connected.connection.email_address, draftId: draft.id, updatedAt: input.updated_at, attachments: input.attachments, actor: session.email, signatureHtml: input.signature_html, stagedReplyId: input.staged_reply_id, cc: input.cc || [], bcc: input.bcc || [] });
       return reply(res, result.status, result.body);
     }
     const config = n8nConfig(env);
     if (!config.emailAssistantWebhook) return reply(res, 503, { error: 'AI email workflow URL is not configured.' });
     const payload = { action: input.action, thread_id: draft.thread_id, draft_id: draft.id, actor: session.email, request_id: uuid(input.request_id) ? input.request_id : crypto.randomUUID() };
-    if (input.action === 'rewrite') payload.instruction = input.instruction.trim();
+    if (input.action === 'rewrite' || input.action === 'assist') payload.instruction = input.instruction.trim();
+    if (input.action === 'assist') payload.chat = (Array.isArray(input.chat) ? input.chat : []).slice(-8).filter(turn => turn && ['owner', 'assistant'].includes(turn.role) && typeof turn.text === 'string').map(turn => ({ role: turn.role, text: turn.text.slice(0, 2000) }));
     if (input.action === 'save') { payload.body_text = input.body_text; payload.body_html = typeof input.body_html === 'string' ? input.body_html.slice(0, 100000) : ''; }
     const upstream = await (injected.fetch || fetch)(config.emailAssistantWebhook, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(config.crmWebhookSecret ? { [config.crmSecretHeader]: config.crmWebhookSecret } : {}) }, body: JSON.stringify(payload), signal: AbortSignal.timeout(90000) });
     const raw = await upstream.text();

@@ -355,3 +355,21 @@
 .mail-account-menu .danger{color:#b42318}
 .mail-account-menu .form-error{margin:4px 6px;font-size:12px}
 @media(max-width:640px){.mail-folders .mail-account{display:flex;flex:0 0 auto;padding:0;overflow:visible}.mail-folders .mail-account-toggle{max-width:62vw;gap:6px}.mail-folders .mail-account-menu{position:fixed;left:12px;right:12px;top:auto;bottom:86px;min-width:0}.mail-folders .mail-account-menu a,.mail-folders .mail-account-menu button{width:100%;min-height:0;border:0;border-radius:4px;padding:10px 12px!important;font-size:14px!important;background:transparent}}
+/* 13 Oct: AI draft chat, Cc/Bcc, New marker, quoted text toggle, permanent customer delete */
+.inline-ai-to{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.inline-ai-to>span{margin-right:auto}
+.inline-ai-copy{flex-direction:row;align-items:center;gap:8px;font-size:12px;color:#5b6b76}.inline-ai-copy>span{width:30px}.inline-ai-copy input{flex:1;min-height:30px;padding:6px 9px}
+.inline-ai-chat{display:flex;flex-direction:column;gap:6px;border:1px solid #e3ebe8;border-radius:8px;background:#f8fbfa;padding:10px}
+.inline-ai-chat form{display:flex;align-items:center;gap:8px;color:#5f7b72}.inline-ai-chat input{flex:1;min-height:32px;font-size:13px}
+.inline-ai-chat small{color:#7d8c93;font-size:11px}
+.inline-ai-chat-log{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;padding-bottom:2px}
+.chat-turn{font-size:13px;line-height:1.55;padding:7px 10px;border-radius:8px;max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-turn.owner{align-self:flex-end;background:var(--teal);color:#fff}
+.chat-turn.assistant{align-self:flex-start;background:#fff;border:1px solid #dfe8e5;color:#26313e}
+.chat-turn.changed{border-color:#bfe2d6;background:#e9f6f1;color:#126552}.chat-turn.pending{color:#7d8c93;font-style:italic}
+.inline-ai-file-total{color:#647780}
+.pill.new-tag{background:#e8f0fe;color:#1d4fb8;border:1px solid #c9d8f8;font-weight:650}
+.quoted-toggle{margin:6px 0 2px 12px}
+.danger-text{color:#b42318!important}.primary.danger{background:#b42318;border-color:#b42318}.primary.danger:hover:not(:disabled){background:#912018}
+.purge-dialog{max-width:520px;display:flex;flex-direction:column;gap:12px}.purge-dialog p{font-size:12px;color:#4b5a67}
+.purge-choice{flex-direction:row;align-items:flex-start;gap:10px;font-size:12px;color:#26313e;font-weight:400;border:1px solid #e4e8ec;border-radius:8px;padding:10px 12px;cursor:pointer}.purge-choice input{width:auto;margin-top:3px}
+.table-wrap{overflow:auto}

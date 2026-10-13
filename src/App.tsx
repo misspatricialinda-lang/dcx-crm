@@ -168,8 +168,8 @@ function Dashboard({
     update(d=>{const books=d.books.filter(b=>b.id!==id);return {...d,books,draft:d.draft?.bookId===id?{...d.draft,bookId:books[0].id,bookVersion:books[0].version,lines:books[0].items.map(r=>lineFromRate(r,0)),taxPercent:books[0].taxPercent??0}:d.draft};},'Pricing agreement deleted.');
   }
   const [tab, setTab] = useState(() =>
-    nav.map((n) => n.id).includes(location.hash.slice(1))
-      ? location.hash.slice(1)
+    nav.map((n) => n.id).includes(location.hash.slice(1).split("/")[0])
+      ? location.hash.slice(1).split("/")[0]
       : "dashboard",
   );
   const [focusId, setFocusId] = useState("");
@@ -194,7 +194,8 @@ function Dashboard({
   }, [localData, loaded.error]);
   useEffect(() => {
     const change = () => {
-      const id = location.hash.slice(1);
+      // A page may keep its own place after a slash, e.g. #quotations/<customer id>.
+      const id = location.hash.slice(1).split("/")[0];
       setTab(nav.map((n) => n.id).includes(id) ? id : "dashboard");
     };
     window.addEventListener("hashchange", change);

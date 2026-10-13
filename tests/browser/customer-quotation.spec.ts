@@ -12,6 +12,22 @@ test('quotation navigation starts with customer selection', async ({ page }) => 
   await expect(page.getByRole('dialog', { name: 'Quotation editor' })).toBeVisible();
 });
 
+test('the Quotations menu item and the browser Back button return to the customer list', async ({ page }) => {
+  await page.route('**/api/auth', route => route.fulfill({ json: { configured: false, user: null } }));
+  await page.goto('/');
+  await page.getByRole('button', { name: /Open local dashboard preview/ }).click();
+  const menu = page.getByRole('button', { name: 'Quotations', exact: true }).first();
+  await menu.click();
+  await page.getByRole('button', { name: 'View quotations', exact: true }).first().click();
+  await expect(page.getByText(/^Quotations for /)).toBeVisible();
+  await menu.click();
+  await expect(page.getByText('Select a customer to create or view quotations.')).toBeVisible();
+  await page.getByRole('button', { name: 'View quotations', exact: true }).first().click();
+  await expect(page.getByText(/^Quotations for /)).toBeVisible();
+  await page.goBack();
+  await expect(page.getByText('Select a customer to create or view quotations.')).toBeVisible();
+});
+
 test('customer profile keeps history accessible without quotation buttons or tab row', async ({ page }) => {
   await page.route('**/api/auth', route => route.fulfill({ json: { configured: false, user: null } }));
   await page.goto('/');

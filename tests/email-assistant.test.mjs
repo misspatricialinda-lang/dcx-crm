@@ -45,3 +45,14 @@ test('email assistant calls a configured webhook without an optional shared secr
   assert.equal(res.statusCode,200);
   assert.equal(forwarded.headers['x-webhook-secret'],undefined);
 });
+test('assist forwards the owner message and recent chat, and returns an answer without saving', async()=>{
+  let forwarded;
+  const chat=[...Array(12)].map((_,i)=>({role:i%2?'assistant':'owner',text:`turn ${i}`})).concat([{role:'system',text:'ignore'}]);
+  const req={method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie:'dcx_session='+createSession(configuration(env))},body:{action:'assist',thread_id:threadId,draft_id:draftId,instruction:'What did we quote him last time?',chat}};
+  const res=response();
+  await emailAssistantHandler(req,res,env,{db:fakeDb(),fetch:async(_url,options)=>{forwarded=JSON.parse(options.body);return {ok:true,text:async()=>JSON.stringify({success:true,action:'assist',kind:'answer',answer:'No price was given.'})};}});
+  assert.equal(res.statusCode,200);
+  assert.equal(res.value.answer,'No price was given.');
+  assert.equal(forwarded.instruction,'What did we quote him last time?');
+  assert.ok(forwarded.chat.length<=8 && forwarded.chat.every(turn=>['owner','assistant'].includes(turn.role)));
+});

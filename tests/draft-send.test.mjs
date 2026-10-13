@@ -95,3 +95,24 @@ test('a signature edited in the email is sent cleaned, with the banner; a cleare
   assert.doesNotMatch(html, /dcx-signature|Raza Iqbal/);
   assert.ok(!graph.calls.some(call => call.body?.name === 'dcx-signature-banner.jpg'));
 });
+
+test('a prepared reply with uploaded files is sent with Cc and Bcc and the files are recorded', async () => {
+  const db = fakeDb(), calls = [];
+  const people = list => list.map(address => ({ emailAddress: { address } }));
+  const graph = async (path, options = {}) => {
+    calls.push({ path, method: options.method || 'GET', body: options.body });
+    if (path.endsWith('/createReply')) throw new Error('must reuse the prepared reply');
+    if (path.startsWith('/messages/staged-1?$select=id,isDraft,conversationId,body')) return { id: 'staged-1', isDraft: true, conversationId: 'conv-1', body: { contentType: 'html', content: '<html><body>quoted original</body></html>' } };
+    if (path.includes('/attachments?$select=')) return { value: [{ id: 'a1', name: 'big-drawing.pdf', contentType: 'application/pdf', size: 9000000, isInline: false }] };
+    if (path.includes('$select=')) return { id: 'staged-1', isDraft: true, conversationId: 'conv-1', toRecipients: people(['customer@example.com']), ccRecipients: people(['boss@example.com']), bccRecipients: people(['archive@example.com']) };
+    return null;
+  };
+  const result = await sendAiDraft({ db, graph, mailbox: 'owner@outlook.com', draftId: 'd1', updatedAt: '2026-10-07T10:00:00Z', actor: 'owner@example.com', stagedReplyId: 'staged-1', cc: ['boss@example.com'], bcc: ['archive@example.com'] });
+  assert.equal(result.status, 200);
+  const patch = calls.find(call => call.method === 'PATCH');
+  assert.deepEqual(patch.body.ccRecipients, people(['boss@example.com']));
+  assert.deepEqual(patch.body.bccRecipients, people(['archive@example.com']));
+  assert.ok(calls.some(call => call.path === '/messages/staged-1/send'));
+  const finished = db.calls.find(call => call.name === 'crm_finish_draft_send');
+  assert.equal(finished.args.p_attachments[0].name, 'big-drawing.pdf');
+});

@@ -48,6 +48,26 @@ export async function crmHandler(req, res, env = process.env, injectedDb) {
       try { return respond(res,200,await emailBrainRequest(db,req,url,req.method==='GET'?null:await bodyOf(req))); }
       catch(error){return respond(res,['42P01','42703','PGRST202','PGRST205'].includes(error.code)?503:400,{error:['42P01','42703','PGRST202','PGRST205'].includes(error.code)?'Apply the October 4 email memory and workspace migrations to connect these controls.':error.message});}
     }
+    // Quotations kept after their customer was permanently deleted.
+    if(action==='archived-quotations') {
+      if(req.method==='GET') {
+        const {data,error}=await db.from('crm_quotations').select('*,items:crm_quotation_items(*)').is('customer_id',null).order('created_at',{ascending:false}).limit(500);
+        if(error)throw error;
+        return respond(res,200,{records:data.map(q=>({...q,items:(q.items||[]).sort((a,b)=>a.position-b.position)}))});
+      }
+      const input=await bodyOf(req);
+      if(req.method!=='POST'||input.action!=='purge'||!uuid(input.id)||!Number.isSafeInteger(input.version))return respond(res,400,{error:'Reload the archived quotation before deleting it.'});
+      const {error}=await db.rpc('crm_archived_quotation_purge',{p_id:input.id,p_version:input.version});
+      if(error)return respond(res,409,{error:'Quotation changed or was already deleted. Reload the list.'});
+      return respond(res,200,{success:true});
+    }
+    if(action==='purge-customer') {
+      const input=await bodyOf(req);
+      if(req.method!=='POST'||!uuid(input.id)||!Number.isFinite(Date.parse(input.updated_at))||typeof input.keep_records!=='boolean')return respond(res,400,{error:'Reload the customer before deleting it.'});
+      const {data,error}=await db.rpc('crm_customer_purge',{p_id:input.id,p_updated_at:input.updated_at,p_keep_records:input.keep_records});
+      if(error)throw error;
+      return data?.ok?respond(res,200,data):respond(res,409,{error:data?.reason||'Customer changed. Reload it.'});
+    }
     if(action==='quotations') {
       const checked=async q=>{const {data,error}=await q;if(error){const e=new Error(error.message);e.code=error.code;throw e;}return data;};
       const customerId=url.searchParams.get('customer_id');

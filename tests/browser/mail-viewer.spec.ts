@@ -33,6 +33,7 @@ test('email shows embedded pictures, working links and previews attachments', as
   await page.route('**/api/notifications?*', route => route.fulfill({ json: { records: [], unread: 0 } }));
   await page.route('**/api/tracking?*', route => route.fulfill({ json: { attention: 0, drafts: 0, waiting: 0, due: 0, recent: [] } }));
   await page.goto('/#inbox');
+  await page.locator('.thread-item').first().click();
 
   await expect(page.getByText('External images and links are blocked')).toHaveCount(0);
   const body = page.frameLocator('.original-email-frame');

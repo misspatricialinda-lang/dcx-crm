@@ -31,7 +31,9 @@ import {
 import type { Client } from "../../types/operations";
 import {
   addressList,
+  attachmentLimitError,
   groupMicrosoftMessages,
+  uploadAttachment,
   mailTimestamp,
   mailRequest,
   type MailAttachment,
@@ -59,8 +61,8 @@ function formatMailListDate(message: MicrosoftMessage) {
   });
 }
 const folderOrder = ['inbox', 'junkemail', 'drafts', 'sentitems', 'deleteditems', 'archive', 'conversationhistory'];
-// The app sends mail directly, so Outlook's Outbox is always empty here.
-const hiddenFolders = new Set(['outbox']);
+// Outbox is always empty (the app sends directly); RSS and sync-conflict folders are not useful here.
+const hiddenFolders = new Set(['outbox', 'rss feeds', 'rss subscriptions', 'sync issues']);
 // Matches the CSS phone layout, where the reading screen already shows the whole chain.
 const isPhone = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
 function folderKey(folder: MicrosoftFolder) { return `${folder.id} ${folder.displayName}`.toLowerCase().replace(/[^a-z]/g, ''); }
@@ -73,12 +75,6 @@ function FolderIcon({ folder }: { folder: MicrosoftFolder }) {
   const rank = folderRank(folder);
   const Icon = rank === 0 ? Inbox : rank === 1 ? ShieldAlert : rank === 2 ? PenLine : rank === 3 ? Send : rank === 4 ? Trash2 : rank === 5 ? Archive : Folder;
   return <Icon size={16} aria-hidden="true" />;
-}
-async function attachmentBase64(file: File) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = '';
-  for (let start = 0; start < bytes.length; start += 16384) binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
-  return btoa(binary);
 }
 type RecipientSuggestion = { name: string; email: string; company?: string; source: string };
 const recipientValue = (list?: MicrosoftMessage['toRecipients']) => {
@@ -152,7 +148,10 @@ export function ConnectedInbox({
 const AI_FOLDER = '__ai_drafts__';
 const AI_DISCARDED = '__ai_discarded__';
 const FOLLOW_FOLDER = '__followups__';
-type DraftRecord = { id: string; provider_thread_key: string | null; subject: string; sender?: string; preview?: string; last_message_at: string; has_attachments?: boolean; customer_id: string | null; draft: { id: string } };
+type DraftRecord = { id: string; provider_thread_key: string | null; subject: string; sender?: string; preview?: string; last_message_at: string; has_attachments?: boolean; customer_id: string | null; draft: { id: string; updated_at: string } };
+const SEEN_KEY = 'dcx-seen-ai-drafts';
+function readSeen(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); } catch { return new Set(); } }
+function writeSeen(seen: Set<string>) { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* optional */ } }
 async function moveMessageToAi(messageId:string){
   const prepared=await trackingRequest('prepare_ai',{}, {message_id:messageId});
   if(prepared.needs_generation){
@@ -333,16 +332,45 @@ function MicrosoftInbox({
     .sort((a, b) => b.last_message_at.localeCompare(a.last_message_at));
   const followRows = followups.filter(record => record.provider_thread_key && `${record.subject} ${record.contact || ''}`.toLowerCase().includes(query.toLowerCase()));
   const listKeys = aiView ? draftRows.map(record => record.provider_thread_key!) : followView ? followRows.map(record => record.provider_thread_key!) : [];
-  const aiOpen = listView ? selected || listKeys[0] || '' : '';
+  const aiOpen = listView ? selected : '';
   // In AI drafts the ribbon acts on the conversation loaded in the reading pane.
   const active = listView
     ? (threadMessages[aiOpen]?.length ? { id: aiOpen, messages: threadMessages[aiOpen], latest: threadMessages[aiOpen][threadMessages[aiOpen].length - 1] } : undefined)
-    : groups.find((t) => t.id === selected) || (selected ? undefined : groups[0]);
+    : groups.find((t) => t.id === selected);
   const openId = listView ? aiOpen : active?.id || selected;
   // "Next" walks the conversations with a waiting reply, in the order they appear in the list.
   const draftOrder = listView ? listKeys : groups.filter(group => draftKeys.has(group.id)).map(group => group.id);
   const nextDraft = (current: string) => { const index = draftOrder.indexOf(current); return draftOrder.filter(key => key !== current)[index < 0 ? 0 : index] || ''; };
+  const [seenDrafts, setSeenDrafts] = useState(readSeen);
+  const markSeen = (key: string) => {
+    const record = drafts.find(item => item.provider_thread_key === key);
+    if (!record || seenDrafts.has(record.draft.id)) return;
+    const next = new Set(seenDrafts); next.add(record.draft.id); setSeenDrafts(next); writeSeen(next);
+  };
+  useEffect(() => { if (selected) markSeen(selected); }, [selected, drafts]);
   function goTo(id: string) { setPhoneReading(true); dirty.current = false; manualUnread.current.clear(); setEditorRequest(undefined); setSelected(id); }
+  // Deleting a conversation moves its received messages to Deleted Items and discards any waiting AI draft.
+  async function deleteConversation(key: string) {
+    if (!canLeave()) return;
+    const record = drafts.find(item => item.provider_thread_key === key);
+    if (!window.confirm(record ? 'Delete this email and its AI draft? The email moves to Deleted Items.' : 'Move this conversation to Deleted Items?')) return;
+    setBusy(true); setError('');
+    try {
+      let page = await mailRequest<Page<MicrosoftMessage>>('thread', { conversation: key });
+      const all = [...page.records];
+      while (page.next) { page = await mailRequest('page', { cursor: page.next }); all.push(...page.records); }
+      const keep = new Set(folders.filter(item => ['sent items', 'deleted items'].includes(item.displayName.toLowerCase())).map(item => item.id));
+      for (const message of all.filter(item => !item.isDraft && !keep.has(item.parentFolderId))) await mailRequest('move', {}, { id: message.id, destinationId: 'deleteditems' });
+      if (record) {
+        const response = await fetch('/api/email-assistant', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', draft_id: record.draft.id, updated_at: record.draft.updated_at }) });
+        if (!response.ok) throw new Error((await response.json()).error || 'The email was deleted, but its AI draft could not be discarded.');
+      }
+      dirty.current = false;
+      if (selected === key) { setSelected(listView ? nextDraft(key) : ''); setPhoneReading(false); }
+      afterAction();
+    } catch (cause) { setError((cause as Error).message); }
+    finally { setBusy(false); }
+  }
   function replyOutcome(current: string, outcome: 'sent' | 'discarded' | 'changed') {
     void loadDrafts();
     void loadFollowups();
@@ -560,7 +588,7 @@ function MicrosoftInbox({
         <button disabled={!active || busy} onClick={() => quickAction("move")}>
           <Archive size={16} /> Archive
         </button>
-        <button disabled={!active || busy} onClick={() => quickAction("move", "deleteditems")}>
+        <button disabled={!active || busy} onClick={() => listView && active ? void deleteConversation(active.id) : quickAction("move", "deleteditems")}>
           <Trash2 size={16} /> Delete
         </button>
         <label className="ribbon-move"><Folder size={16} /><select aria-label="Move selected message to folder" disabled={!active || busy} value="" onChange={event => { const destinationId = event.target.value; if (destinationId) void quickAction('move', destinationId); event.target.value = ''; }}><option value="">Move to</option><option value="__ai_drafts__">AI drafts</option>{folders.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
@@ -664,7 +692,7 @@ function MicrosoftInbox({
             {folderRank(f) === 0 && !f.depth && aiFolderButtons}
           </div>))}
           <div className="mail-folder-foot">
-            Conversations tagged <b>AI draft</b> have a reply ready under the email.
+            Conversations tagged <b>AI draft</b> have a reply ready above the email.
           </div>
         </aside>
         {discardedView ? <div className="discarded-drafts-pane"><TrackedInbox initialTrash trashOnly customers={customers} onQuote={onQuote} provider={provider} onMailbox={() => chooseFolder(inboxId)} /></div> : <>
@@ -691,16 +719,17 @@ function MicrosoftInbox({
           </div>
           {aiView && draftRows.map(record => (
             <div className="thread-group" key={record.id}>
-              <button className={`thread-item ${openId === record.provider_thread_key ? 'active' : ''}`} onClick={() => { if (openId === record.provider_thread_key) setPhoneReading(true); else if (canLeave()) goTo(record.provider_thread_key!); }}>
+              <button className={`thread-item ${openId === record.provider_thread_key ? 'active' : ''} ${seenDrafts.has(record.draft.id) ? '' : 'unread'}`} onClick={() => { if (openId === record.provider_thread_key) setPhoneReading(true); else if (canLeave()) goTo(record.provider_thread_key!); }}>
                 <span className="thread-chevron" />
                 <span className="thread-avatar">{(record.sender || record.subject || 'A')[0].toUpperCase()}</span>
                 <span className="thread-copy">
                   <span className="thread-sender"><strong>{customers.find(c => c.id === record.customer_id)?.name || record.sender || 'Email conversation'}</strong><time>{formatMailListDate({ receivedDateTime: record.last_message_at } as MicrosoftMessage)}</time></span>
                   <h3>{record.subject || '(No subject)'}</h3>
                   <p>{record.preview}</p>
-                  <footer><span className="pill ai-draft-tag"><Sparkles size={11} /> AI draft</span>{record.has_attachments && <Paperclip size={13} />}</footer>
+                  <footer>{!seenDrafts.has(record.draft.id) && <span className="pill new-tag">New</span>}<span className="pill ai-draft-tag"><Sparkles size={11} /> AI draft</span>{record.has_attachments && <Paperclip size={13} />}</footer>
                 </span>
               </button>
+              <button className="thread-delete" type="button" aria-label={`Delete ${record.subject || 'email'} and its AI draft`} title="Delete email and AI draft" disabled={busy} onClick={() => void deleteConversation(record.provider_thread_key!)}><Trash2 size={16}/></button>
             </div>
           ))}
           {aiView && !draftRows.length && <div className="empty-state">{query ? 'No AI drafts match your search.' : 'All caught up. No AI replies are waiting for review.'}</div>}
@@ -791,6 +820,7 @@ function MicrosoftInbox({
                   </span>
                 </button>
                 {provider === 'microsoft' && folder !== 'deleteditems' && <button className="thread-delete" type="button" aria-label={`Delete ${t.latest.subject || 'message'}`} title="Move to Deleted Items" disabled={busy} onClick={async () => {
+                  if (draftKeys.has(t.id)) { void deleteConversation(t.id); return; }
                   if (!canLeave()) return;
                   setError('');
                   try { await mailRequest('move', {}, { id: t.latest.id, destinationId: 'deleteditems' }); afterAction(); }
@@ -801,7 +831,7 @@ function MicrosoftInbox({
                     className="thread-children"
                     aria-label="Conversation messages"
                   >
-                    {t.messages.map((message) => (
+                    {[...t.messages].reverse().map((message) => (
                       <div className="thread-child" key={message.id}>
                         <span className="thread-child-avatar">
                           {(message.from?.emailAddress.name ||
@@ -857,6 +887,7 @@ function MicrosoftInbox({
             editorRequest={editorRequest}
             onMarkedUnread={id => manualUnread.current.add(id)}
             hasAiDraft={draftKeys.has(openId)}
+            onDeleteEmail={draftKeys.has(openId) ? () => void deleteConversation(openId) : undefined}
             onReplyOutcome={outcome => replyOutcome(openId, outcome)}
             onNextDraft={nextDraft(openId) ? () => goTo(nextDraft(openId)) : undefined}
             onBack={() => { if (canLeave()) { dirty.current = false; setPhoneReading(false); setOpenThreads([]); } }}
@@ -926,6 +957,7 @@ function LiveConversation({
   editorRequest,
   onMarkedUnread,
   hasAiDraft,
+  onDeleteEmail,
   onReplyOutcome,
   onNextDraft,
   onBack,
@@ -946,6 +978,7 @@ function LiveConversation({
   editorRequest?: { id: string; kind: 'reply' | 'replyAll' | 'forward' | 'edit'; nonce: number };
   onMarkedUnread: (id: string) => void;
   hasAiDraft: boolean;
+  onDeleteEmail?: () => void;
   onReplyOutcome: (outcome: ReplyOutcome) => void;
   onNextDraft?: () => void;
   onBack: () => void;
@@ -1155,8 +1188,39 @@ function LiveConversation({
           {matches.length > 1 && <p>Multiple customer records match this conversation.</p>}
         </section>
         )}
+        {editor ? (
+          <div ref={editorNode} className="inline-mail-composer"><DraftEditor
+            key={`${editor.replyTo}-${editor.replyAll}-${editor.forwardOf}-${editor.existing?.id}-${editor.nonce || ''}`}
+            {...editor}
+            onDirty={(v) => {
+              editorDirty.current = v;
+              onDirty(v);
+            }}
+            onChanged={onChanged}
+            onSent={() => edit(undefined)}
+            provider={provider}
+            mailbox={mailbox}
+            source={messages.find(message => message.id === (editor.replyTo || editor.forwardOf))}
+            onDiscard={() => { editorDirty.current = false; onDirty(false); setEditor(undefined); }}
+            customers={customers}
+            customerId={matches.length === 1 ? matches[0].id : undefined}
+          />{hasAiDraft && <p className="field-help">An AI draft is also waiting for this conversation. Close this editor to review it.</p>}</div>
+        ) : latestIncoming && (
+          <InlineAiReply
+            internetId={latestIncoming.internetMessageId}
+            sourceMessageId={latestIncoming.id}
+            revision={revision}
+            customers={customers}
+            customerId={matches.length === 1 ? matches[0].id : undefined}
+            onDirty={value => { aiDirty.current = value; onDirty(value); }}
+            onOutcome={onReplyOutcome}
+            onNext={onNextDraft}
+            nextLabel="Next AI draft"
+            onDeleteEmail={onDeleteEmail}
+          />
+        )}
         <div className="conversation-label">
-          <span>ORIGINAL CONVERSATION</span>
+          <span>CONVERSATION · NEWEST FIRST</span>
           <button
             className="text-button"
             onClick={() =>
@@ -1172,7 +1236,7 @@ function LiveConversation({
               : "Expand all"}
           </button>
         </div>
-        {messages.map((m) => (
+        {[...messages].reverse().map((m) => (
           <article className="conversation-message" key={m.id}>
             <button
               className="conversation-message-header"
@@ -1282,36 +1346,6 @@ function LiveConversation({
             )}
           </article>
         ))}
-        {editor ? (
-          <div ref={editorNode} className="inline-mail-composer"><DraftEditor
-            key={`${editor.replyTo}-${editor.replyAll}-${editor.forwardOf}-${editor.existing?.id}-${editor.nonce || ''}`}
-            {...editor}
-            onDirty={(v) => {
-              editorDirty.current = v;
-              onDirty(v);
-            }}
-            onChanged={onChanged}
-            onSent={() => edit(undefined)}
-            provider={provider}
-            mailbox={mailbox}
-            source={messages.find(message => message.id === (editor.replyTo || editor.forwardOf))}
-            onDiscard={() => { editorDirty.current = false; onDirty(false); setEditor(undefined); }}
-            customers={customers}
-            customerId={matches.length === 1 ? matches[0].id : undefined}
-          />{hasAiDraft && <p className="field-help">An AI draft is also waiting for this conversation. Close this editor to review it.</p>}</div>
-        ) : latestIncoming && (
-          <InlineAiReply
-            internetId={latestIncoming.internetMessageId}
-            sourceMessageId={latestIncoming.id}
-            revision={revision}
-            customers={customers}
-            customerId={matches.length === 1 ? matches[0].id : undefined}
-            onDirty={value => { aiDirty.current = value; onDirty(value); }}
-            onOutcome={onReplyOutcome}
-            onNext={onNextDraft}
-            nextLabel="Next AI draft"
-          />
-        )}
       </div>
     </section>
   );
@@ -1324,6 +1358,7 @@ function MessageContent({
   revision: number;
 }) {
   const [record, setRecord] = useState<MicrosoftMessage>();
+  const [showQuoted, setShowQuoted] = useState(false);
   const [attachments, setAttachments] = useState<MailAttachment[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -1425,9 +1460,10 @@ function MessageContent({
           {error}
         </p>
       )}
-      {record?.body ? (
-        <SafeMailBody body={record.body} images={images} />
-      ) : (
+      {record?.body ? (<>
+        <SafeMailBody body={!showQuoted && hasQuoted(record) ? record.uniqueBody! : record.body} images={images} />
+        {hasQuoted(record) && <button type="button" className="text-button quoted-toggle" onClick={() => setShowQuoted(value => !value)}>{showQuoted ? 'Hide earlier messages' : '··· Show earlier messages quoted in this email'}</button>}
+      </>) : (
         <p>{message.bodyPreview}</p>
       )}
       {listed.length > 0 && (
@@ -1463,6 +1499,12 @@ function MessageContent({
       )}
     </>
   );
+}
+// Microsoft's uniqueBody is the part of a message that is new in it; the rest is quoted history.
+const plainLength = (value?: string) => (value || '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, '').replace(/&nbsp;|\s+/g, ' ').trim().length;
+function hasQuoted(record: MicrosoftMessage) {
+  const unique = plainLength(record.uniqueBody?.content), full = plainLength(record.body?.content);
+  return !!record.uniqueBody?.content && unique > 0 && full - unique > 40;
 }
 export function SafeMailBody({
   body,
@@ -1581,6 +1623,7 @@ function DraftEditor({
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>(() => customers.filter(customer => customer.email).map(customer => ({ name: customer.contact || customer.name, email: customer.email, company: customer.name, source: 'CRM customer' })));
   const [sent, setSent] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState('');
   const [signatureHtml, setSignatureHtml] = useState<string>();
   const [quotationOptions, setQuotationOptions] = useState<CustomerQuotation[] | null>(null);
   const [quotationBusy, setQuotationBusy] = useState(false);
@@ -1669,7 +1712,7 @@ function DraftEditor({
     try {
       const pdf = await buildCustomerQuotationPdf(quote, await quotationLogo());
       const file = new File([pdf.output('blob')], `DCX-Estimate-${quote.estimate_number}.pdf`, { type: 'application/pdf' });
-      if (files.length >= 5 || files.reduce((size, item) => size + item.size, file.size) > 3 * 1024 * 1024) throw new Error('Attach up to five files, with a combined size under 3 MB.');
+      const limit = attachmentLimitError([...files, file]); if (limit) throw new Error(limit);
       setFiles(current => [...current, file]); setQuotationOptions(null); change();
     } catch (cause) { setError((cause as Error).message); }
     finally { setQuotationBusy(false); }
@@ -1692,12 +1735,17 @@ function DraftEditor({
       if (data.record.bccRecipients?.length) setShowBcc(true);
     }
     let current = data as { record: MicrosoftMessage; version: string };
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    let done = 0;
     for (const file of files) {
-      const attached = await mailRequest<{ version: string; hasAttachments: boolean }>('attach', {}, { id: current.record.id, name: file.name, contentType: file.type || 'application/octet-stream', contentBytes: await attachmentBase64(file) });
-      current = { record: { ...current.record, hasAttachments: attached.hasAttachments }, version: attached.version };
-      setSaved(current);
+      setUploading(`Uploading ${file.name}…`);
+      await uploadAttachment(current.record.id, file, sent => setUploading(`Uploading attachments… ${Math.round((done + sent) / total * 100)}%`));
+      done += file.size;
       setFiles(remaining => remaining.filter(item => item !== file));
     }
+    setUploading('');
+    // Uploads change the draft in Outlook; read its new version so later saves and the send match it.
+    if (files.length) { const fresh = await mailRequest<{ record: MicrosoftMessage; version: string }>('message', { id: current.record.id }); current = { record: { ...current.record, hasAttachments: true }, version: fresh.version }; setSaved(current); }
     setDirty(false);
     onDirty(false);
     onChanged();
@@ -1776,6 +1824,7 @@ function DraftEditor({
           {notice}
         </p>
       )}
+      {uploading && <p className="notice" role="status">{uploading}</p>}
       <div className="mail-addresses">
         <RecipientField label="To" value={to} disabled={busy || !ready} suggestions={suggestions} onChange={value => { setTo(value); change(); }} placeholder="Type a name or email" actions={<span className="mail-recipient-actions">{!showCc && <button type="button" onClick={() => setShowCc(true)}>Cc</button>}{!showBcc && <button type="button" onClick={() => setShowBcc(true)}>Bcc</button>}</span>} />
         {showCc && <RecipientField label="Cc" value={cc} disabled={busy || !ready} suggestions={suggestions} onChange={value => { setCc(value); change(); }} actions={<button type="button" className="mail-recipient-remove" aria-label="Remove Cc field and recipients" onClick={() => { setCc(''); setShowCc(false); change(); }}><X size={14}/> Remove</button>} />}
@@ -1803,7 +1852,7 @@ function DraftEditor({
             <div ref={editorRef} className="mail-rich-editor" role="textbox" aria-label="Email reply content" aria-multiline="true" contentEditable={!busy && ready} suppressContentEditableWarning data-placeholder="Write your message…" onInput={event => { setContent(event.currentTarget.innerHTML); change(); }} />
             {provider === 'microsoft' && <SignatureField onChange={setSignatureHtml} disabled={busy} />}
           </div>
-          {provider === 'microsoft' && <div className="mail-file-picker"><label><Paperclip size={15}/> Attach files<input type="file" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);event.target.value='';if(files.length+incoming.length>5||[...files,...incoming].reduce((size,file)=>size+file.size,0)>3*1024*1024){setError('Attach up to five files, with a combined size under 3 MB.');return;}setFiles(current=>[...current,...incoming]);if(incoming.length)change();}}/></label><select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotationOptions(null);}}><option value="">Choose customer for quotation</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select><button className="secondary compact" type="button" disabled={busy||quotationBusy||!quotationCustomerId} onClick={()=>void loadQuotations()}>{quotationBusy?'Loading…':'Attach saved quotation'}</button>{quotationOptions&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotationOptions.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotationOptions.length?'Choose a quotation PDF':'No saved quotations for this customer'}</option>{quotationOptions.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} · {quote.status} · created {new Date(quote.created_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}</option>)}</select>}{files.map((file,index)=><span key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>{setFiles(current=>current.filter((_,i)=>i!==index));change();}}><X size={13}/></button></span>)}</div>}
+          {provider === 'microsoft' && <div className="mail-file-picker"><label><Paperclip size={15}/> Attach files<input type="file" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);event.target.value='';const limit=attachmentLimitError([...files,...incoming]);if(limit){setError(limit);return;}setError('');setFiles(current=>[...current,...incoming]);if(incoming.length)change();}}/></label><select aria-label="Customer for saved quotation" value={quotationCustomerId} onChange={event=>{setQuotationCustomerId(event.target.value);setQuotationOptions(null);}}><option value="">Choose customer for quotation</option>{customers.map(customer=><option key={customer.id} value={customer.id}>{customer.name}</option>)}</select><button className="secondary compact" type="button" disabled={busy||quotationBusy||!quotationCustomerId} onClick={()=>void loadQuotations()}>{quotationBusy?'Loading…':'Attach saved quotation'}</button>{quotationOptions&&<select aria-label="Choose saved quotation to attach" value="" onChange={event=>{const quote=quotationOptions.find(item=>item.id===event.target.value);if(quote)void attachQuotation(quote);}}><option value="">{quotationOptions.length?'Choose a quotation PDF':'No saved quotations for this customer'}</option>{quotationOptions.map(quote=><option key={quote.id} value={quote.id}>Estimate #{quote.estimate_number} · {quote.status} · created {new Date(quote.created_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}</option>)}</select>}{files.map((file,index)=><span key={`${file.name}-${index}`}>{file.name} ({Math.ceil(file.size/1024)} KB)<button type="button" aria-label={`Remove ${file.name}`} onClick={()=>{setFiles(current=>current.filter((_,i)=>i!==index));change();}}><X size={13}/></button></span>)}</div>}
           <div className="button-row">
             <button
               className="secondary"
