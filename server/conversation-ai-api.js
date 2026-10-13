@@ -105,7 +105,7 @@ export async function conversationAiHandler(req, res, env = process.env, injecte
     const embedding = await openai('embeddings', { model: env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small', input: transcript.slice(-10000) }, env, transport);
     const vector = embedding.data?.[0]?.embedding;
     if (!Array.isArray(vector) || vector.length !== 1536) throw new Error('Knowledge search embedding must have 1536 dimensions. Check OPENAI_EMBEDDING_MODEL.');
-    const memory = await retrieveEmailMemory(db, messages, mailbox, vector);
+    const memory = await retrieveEmailMemory(db, messages, mailbox, vector, id);
     const matches = await checked(db.rpc('match_documents', { query_embedding: vector, match_count: 6, filter: {} }));
     const knowledge = (matches || []).map((row, index) => ({ id: `K${index + 1}`, text: String(row.content || '').slice(0, 3000), similarity: row.similarity }));
     const attachmentNote = attachments.length ? attachments.map(item => `${item.name}: ${item.status}`).join('; ') : 'No non-inline attachments.';

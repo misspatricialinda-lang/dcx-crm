@@ -7,17 +7,18 @@ export function memoryAddresses(messages, mailbox) {
   return email.includes('@') && email !== owner ? [email] : [];
 }
 
-export async function retrieveEmailMemory(db, messages, mailbox, embedding) {
+// conversationId is excluded from memory: callers already supply that chain in full.
+export async function retrieveEmailMemory(db, messages, mailbox, embedding, conversationId = null) {
   const addresses = memoryAddresses(messages, mailbox);
   if (!addresses.length) return { status: 'no_identity', messages: [] };
   const latest = [...messages].reverse().find(m => !m.isDraft && addresses.includes(m.from?.emailAddress?.address?.toLowerCase()));
   const query = `${latest?.subject || ''} ${latest?.body?.content || ''}`.slice(0, 1500);
   const hybrid = Array.isArray(embedding) && embedding.length === 1536;
   let { data, error } = await db.rpc(hybrid ? 'crm_email_memory_hybrid' : 'crm_email_memory', hybrid
-    ? { p_addresses: addresses, p_query: query, p_embedding: embedding, p_mailbox_address: mailbox }
-    : { p_addresses: addresses, p_query: query, p_limit: 12 });
+    ? { p_addresses: addresses, p_query: query, p_embedding: embedding, p_mailbox_address: mailbox, p_exclude_thread: conversationId }
+    : { p_addresses: addresses, p_query: query, p_limit: 12, p_exclude_thread: conversationId });
   if (hybrid && error && ['PGRST202','42883'].includes(error.code)) {
-    ({ data, error } = await db.rpc('crm_email_memory', { p_addresses: addresses, p_query: query, p_limit: 12 }));
+    ({ data, error } = await db.rpc('crm_email_memory', { p_addresses: addresses, p_query: query, p_limit: 12, p_exclude_thread: conversationId }));
     if (!error) data = { ...data, retrieval: 'keyword_and_recent', semantic_status: 'not_configured' };
   }
   if (error) {
