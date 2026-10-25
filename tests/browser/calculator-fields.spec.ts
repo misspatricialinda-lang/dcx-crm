@@ -17,7 +17,7 @@ test('number cells can be cleared with Backspace and Quote #, PO # and Date reac
   await expect(cost).toHaveValue('0');
   await cost.fill('100');
 
-  await expect(page.getByLabel('Currency', { exact: true })).toHaveValue('CAD');
+  await expect(page.getByLabel('Currency', { exact: true })).toHaveValue('');
   await page.getByLabel('Quote number').fill('DCX-7781');
   await page.getByLabel('PO number').fill('PO-55012');
   await page.getByLabel('Quote date').fill('2026-11-03');
@@ -30,6 +30,7 @@ test('number cells can be cleared with Backspace and Quote #, PO # and Date reac
   const sheet = book.getWorksheet('Job Cost Sheet')!;
   expect(sheet.getCell('L2').value).toBe('DCX-7781');
   expect(sheet.getCell('L3').value).toBe('PO-55012');
+  expect(sheet.getCell('L5').value).toBeNull();
   const date = sheet.getCell('L4').value as Date;
   expect([date.getFullYear(), date.getMonth() + 1, date.getDate()]).toEqual([2026, 11, 3]);
 });

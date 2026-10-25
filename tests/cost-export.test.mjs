@@ -39,7 +39,7 @@ test('export matches the client template and preserves formulas, literal text an
   assert.equal(sheet.pageSetup.printArea,'A1:M42');
   assert.equal(sheet.views[0].state,'normal');
   assert.equal(sheet.getCell('A7').value,null);
-  assert.equal(sheet.getCell('L5').value,'CAD');
+  assert.equal(sheet.getCell('L5').value,null);
   assert.equal(sheet.getCell('C35').value,'All amounts in CAD');
   assert.doesNotMatch(JSON.stringify(sheet.getSheetValues()), /USD|Exchange Rate/);
 });

@@ -46,7 +46,7 @@ export async function buildCostWorkbook(draft: QuoteDraft) {
   mergedText('L3:M3', draft.poNumber?.trim() || '');
   const [year, month, day] = (draft.quoteDate || '').split('-').map(Number);
   sheet.mergeCells('L4:M4'); put('L4', year && month && day ? new Date(year, month - 1, day) : new Date()); sheet.getCell('L4').numFmt = 'yyyy-mm-dd';
-  put('K5', 'Currency'); mergedText('L5:M5', 'CAD');
+  put('K5', 'Currency'); mergedText('L5:M5', draft.currencyLabel?.trim() || '');
   put('C5', draft.customerSnapshot?.name || 'Quick calculation');
   put('C8', draft.site);
   sheet.getRow(5).height = Math.max(30, Math.ceil((draft.customerSnapshot?.name.length || 17) / 55) * 16);
