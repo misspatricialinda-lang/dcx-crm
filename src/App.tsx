@@ -299,15 +299,14 @@ function Dashboard({
       return;
     }
     const source = data.quotes.find((q) => q.id === draft.revises);
+    // A Quote # typed on the worksheet wins; saving it again makes the next revision.
     const number =
+      draft.quoteNumber?.trim() ||
       source?.number ||
       `Q-${new Date().getFullYear()}-${String(data.quotes.length + 1).padStart(3, "0")}`;
-    const revision = source
-      ? Math.max(
-          ...data.quotes
-            .filter((q) => q.number === number)
-            .map((q) => q.revision),
-        ) + 1
+    const earlier = data.quotes.filter((q) => q.number === number);
+    const revision = earlier.length
+      ? Math.max(...earlier.map((q) => q.revision)) + 1
       : 1;
     const q: SavedQuote = {
       ...structuredClone(draft),

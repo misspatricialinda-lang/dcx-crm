@@ -21,6 +21,8 @@ export interface QuoteDraft extends CostInput {
   revises?: string;
   customerId: string; site: string; title: string; bookId: string;
   bookVersion: number; notes: string; validityDays: number; currency: 'CAD';
+  // Header fields from the Job Cost Sheet (Quote #, PO #, Date); blank means automatic.
+  quoteNumber?: string; poNumber?: string; quoteDate?: string;
 }
 export interface SavedQuote extends QuoteDraft {
   id: string; number: string; revision: number; status: 'Draft' | 'Pending review' | 'Approved';

@@ -101,6 +101,13 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       await checked(db.from('crm_email_signature').update({ fields, html: signatureHtml(fields, { banner: !!current.banner_base64 }), enabled: input.enabled !== false, updated_at: new Date().toISOString(), updated_by: session.email }).eq('id', 1));
       return reply(res, 200, { success: true });
     }
+    // "/learn <rule>" from the draft box: a standing instruction sent with every future draft.
+    if (input?.action === 'learn') {
+      const rule = typeof input.rule === 'string' ? input.rule.trim() : '';
+      if (rule.length < 3 || rule.length > 1000) return reply(res, 400, { error: 'Write the rule after /learn (3 to 1000 characters).' });
+      const record = await checked(db.from('ai_owner_rules').insert({ rule, created_by: session.email, source_thread_id: uuid(input.thread_id) ? input.thread_id : null, source_draft_id: uuid(input.draft_id) ? input.draft_id : null }).select('id,rule,created_at').single());
+      return reply(res, 200, { success: true, rule: record });
+    }
     if (['delete','restore'].includes(input?.action)) {
       if(!uuid(input.draft_id)||!Number.isFinite(Date.parse(input.updated_at))) return reply(res,400,{error:'Reload the draft before changing it.'});
       const result=await checked(db.rpc('crm_draft_trash',{p_id:input.draft_id,p_updated_at:input.updated_at,p_restore:input.action==='restore',p_actor:session.email}));

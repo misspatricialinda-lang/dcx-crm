@@ -56,3 +56,22 @@ test('assist forwards the owner message and recent chat, and returns an answer w
   assert.equal(forwarded.instruction,'What did we quote him last time?');
   assert.ok(forwarded.chat.length<=8 && forwarded.chat.every(turn=>['owner','assistant'].includes(turn.role)));
 });
+test('/learn saves a standing rule for the signed-in owner without calling the AI workflow', async()=>{
+  let inserted;
+  const db={from(table){assert.equal(table,'ai_owner_rules');return {insert(row){inserted=row;return this;},select(){return this;},single:async()=>({data:{id:'r1',rule:inserted.rule,created_at:'2026-10-25T00:00:00Z'},error:null})};}};
+  const req={method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie:'dcx_session='+createSession(configuration(env))},body:{action:'learn',rule:'  Keep replies non-technical.  ',thread_id:threadId,draft_id:draftId,created_by:'attacker@example.com'}};
+  const res=response();
+  await emailAssistantHandler(req,res,env,{db,fetch:async()=>{throw new Error('AI workflow must not be called');}});
+  assert.equal(res.statusCode,200);
+  assert.deepEqual(inserted,{rule:'Keep replies non-technical.',created_by:env.APP_LOGIN_EMAIL,source_thread_id:threadId,source_draft_id:draftId});
+  assert.equal(res.value.rule.rule,'Keep replies non-technical.');
+});
+test('/learn rejects an empty rule and requires a session', async()=>{
+  const db={from(){throw new Error('nothing should be saved');}};
+  const res=response();
+  await emailAssistantHandler({method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie:'dcx_session='+createSession(configuration(env))},body:{action:'learn',rule:' '}},res,env,{db});
+  assert.equal(res.statusCode,400);
+  const anonymous=response();
+  await emailAssistantHandler({method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000'},body:{action:'learn',rule:'Never mention discounts.'}},anonymous,env,{db});
+  assert.equal(anonymous.statusCode,401);
+});

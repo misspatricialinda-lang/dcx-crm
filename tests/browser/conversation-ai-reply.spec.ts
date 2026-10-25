@@ -28,6 +28,7 @@ test('inbox shows AI drafts above the email with tag, folder, chat, discard and 
       const body = route.request().postDataJSON(); posted.push(body);
       if (body.action === 'delete') deleted = true;
       if (body.action === 'restore') deleted = false;
+      if (body.action === 'learn') return route.fulfill({ json: { success: true, rule: { id: 'rule-1', rule: body.rule } } });
       if (body.action === 'assist') return route.fulfill({ json: { success: true, action: 'assist', kind: 'answer', answer: 'No price was given in earlier emails.' } });
       return route.fulfill({ json: { success: true, body_text: draft().current_body } });
     }
@@ -67,6 +68,34 @@ test('inbox shows AI drafts above the email with tag, folder, chat, discard and 
   await page.getByLabel('Ask AI or tell it what to change').fill('What did we quote him last time?');
   await page.getByRole('button', { name: 'Ask', exact: true }).click();
   await expect(page.locator('.chat-turn.assistant')).toHaveText('No price was given in earlier emails.');
+  await expect(reply).toHaveValue('Thanks. Please share your availability.');
+
+  // Ctrl+Z / Ctrl+Y undo and redo edits in the draft.
+  await reply.click();
+  await reply.press('End');
+  await reply.pressSequentially(' Kind regards.');
+  await expect(reply).toHaveValue('Thanks. Please share your availability. Kind regards.');
+  await reply.press('Control+z');
+  await expect(reply).toHaveValue('Thanks. Please share your availability.');
+  await reply.press('Control+y');
+  await expect(reply).toHaveValue('Thanks. Please share your availability. Kind regards.');
+  await reply.press('Control+z');
+
+  // The ask box grows with several lines; Shift+Enter adds a line, Enter sends.
+  const askBox = page.getByLabel('Ask AI or tell it what to change');
+  const oneLine = (await askBox.boundingBox())!.height;
+  await askBox.fill('First line\nSecond line\nThird line\nFourth line');
+  expect((await askBox.boundingBox())!.height).toBeGreaterThan(oneLine + 30);
+  await askBox.fill('');
+
+  // "/learn <rule>" saves the rule to memory and leaves the draft unchanged.
+  await askBox.fill('/le');
+  await page.getByRole('button', { name: /\/learn rule/ }).click();
+  await expect(askBox).toHaveValue('/learn ');
+  await askBox.pressSequentially('Keep replies non-technical.');
+  await askBox.press('Enter');
+  await expect(page.locator('.chat-turn.assistant').last()).toHaveText('Saved to memory: Keep replies non-technical.\nAll future drafts will follow it.');
+  expect(posted.find(item => item.action === 'learn')).toMatchObject({ rule: 'Keep replies non-technical.', thread_id: thread.id });
   await expect(reply).toHaveValue('Thanks. Please share your availability.');
 
   // Cc and Bcc can be added to the AI reply.

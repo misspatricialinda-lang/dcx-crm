@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, FilePlus, MailX, MessageSquare, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowRight, FilePlus, MailX, MessageSquare, Mic, MicOff, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import type { Client } from '../../types/operations';
 import { trackingRequest } from '../../lib/email-tracking';
 import { crmRequest, toClient } from '../../lib/crm-client';
@@ -7,6 +7,7 @@ import { attachmentLimitError, uploadAttachment } from '../../lib/microsoft-mail
 import { SignatureField } from './EmailSignature';
 import { buildCustomerQuotationPdf, quotationFileName, quotationLogo, type CustomerQuotation } from '../../lib/customer-quotation';
 import { CustomerQuotations } from './CustomerQuotations';
+import { useUndoHistory } from '../../lib/undo-history';
 
 type Draft = { id:string; thread_id:string; current_body:string; original_ai_body:string|null; to_addresses:string[]; status:string; updated_at:string };
 export type ReplyOutcome = 'sent' | 'discarded' | 'changed';
@@ -32,6 +33,11 @@ function coverNoteInstruction(quote:CustomerQuotation){
     'Keep at most one or two short sentences from the current draft that answer something the customer asked. Then "Kindly review and let me know if you have any questions or concerns." and end with "Thank you,".',
     'Do not write any prices, totals, taxes or costs in the email; they are in the attached PDF.'].join(' ');
 }
+// Voice typing uses the browser's speech recognition (Chrome and Edge); the button is hidden elsewhere.
+type Recognition = { lang:string; continuous:boolean; interimResults:boolean; start():void; stop():void;
+  onresult:((event:{resultIndex:number; results:ArrayLike<ArrayLike<{transcript:string}>&{isFinal:boolean}>})=>void)|null; onend:(()=>void)|null; onerror:((event:{error:string})=>void)|null };
+const SpeechRecognition:(new()=>Recognition)|undefined = typeof window==='undefined' ? undefined : (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+const learnCommand = /^\/learn(?![a-z])\s*/i;
 const validAddress = (value:string) => /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(value);
 
 // The AI reply for one conversation, edited in place above the email like an Outlook inline reply.
@@ -49,7 +55,9 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   const [chat,setChat]=useState<ChatTurn[]>([]);
   const chatEnd=useRef<HTMLDivElement>(null);
   const [quotationCustomerId,setQuotationCustomerId]=useState(customerId||''), [quotations,setQuotations]=useState<CustomerQuotation[]|null>(null);
-  const editor=useRef<HTMLTextAreaElement>(null);
+  const editor=useRef<HTMLTextAreaElement>(null), askBox=useRef<HTMLTextAreaElement>(null);
+  const [listening,setListening]=useState(false);
+  const recognition=useRef<Recognition|null>(null);
   // "New quotation" opens the quotation editor here; a saved quote is attached and the draft becomes a cover note.
   const [quoteFor,setQuoteFor]=useState<Client|null>(null);
   // Customers added from this panel, before the app's customer list reloads.
@@ -74,6 +82,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   }
   const [undoBody,setUndoBody]=useState<{body:string;label:string}|null>(null);
   const dirty=!!draft&&body!==savedBody;
+  const history=useUndoHistory(body,setBody,draft?.id);
   useEffect(()=>{onDirty(dirty);},[dirty]);
   useEffect(()=>()=>onDirty(false),[]);
   const latest=useRef<Draft|null>(null);
@@ -94,6 +103,24 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   },[internetId,revision]);
   useEffect(()=>{const node=editor.current;if(node){node.style.height='auto';node.style.height=`${Math.max(node.scrollHeight,90)}px`;}},[body,draft?.id]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({block:'nearest'});},[chat.length,busy]);
+  // The ask box grows with what is written, up to a limit, then scrolls.
+  useEffect(()=>{const node=askBox.current;if(node){node.style.height='auto';node.style.height=`${Math.min(node.scrollHeight,220)}px`;}},[instruction]);
+  useEffect(()=>()=>recognition.current?.stop(),[]);
+  function toggleVoice(){
+    if(listening){recognition.current?.stop();return;}
+    if(!SpeechRecognition)return;
+    const voice=new SpeechRecognition();
+    const before=instruction.trimEnd();
+    voice.lang=navigator.language||'en-CA';voice.continuous=true;voice.interimResults=true;
+    voice.onresult=event=>{
+      let spoken='';
+      for(let i=0;i<event.results.length;i++)spoken+=event.results[i][0].transcript;
+      setInstruction((before?`${before} `:'')+spoken.trim());
+    };
+    voice.onerror=event=>{if(event.error==='not-allowed')setError('Allow microphone access in the browser to speak instructions.');};
+    voice.onend=()=>{setListening(false);recognition.current=null;askBox.current?.focus();};
+    recognition.current=voice;setListening(true);voice.start();
+  }
 
   async function workflow(action:'rewrite'|'regenerate'|'save'|'send'|'assist',extra:Record<string,unknown>={}){
     if(!draft||busy)return null;
@@ -115,12 +142,26 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   // instructions change the draft.
   async function ask(text:string){
     const message=text.trim();if(!message)return;
+    recognition.current?.stop();
+    const learn=learnCommand.exec(message);
+    if(learn){await remember(message,message.slice(learn[0].length).trim());return;}
     if(dirty&&!await save())return;
     const earlier=chat.slice(-8).map(({role,text})=>({role,text}));
     setChat(old=>[...old,{role:'owner',text:message}]);setInstruction('');
     const result=await workflow('assist',{instruction:message,chat:earlier});
     if(!result){setChat(old=>[...old,{role:'assistant',text:'That did not work. Your draft is unchanged; try again.'}]);return;}
     setChat(old=>[...old,result.kind==='answer'?{role:'assistant',text:result.answer}:{role:'assistant',text:result.note?`Draft updated. ${result.note}`:'Draft updated.',changed:true}]);
+  }
+  // "/learn <rule>" saves a standing instruction that every future draft follows; it does not change this draft.
+  async function remember(message:string,rule:string){
+    setInstruction('');
+    if(!rule){setChat(old=>[...old,{role:'owner',text:message},{role:'assistant',text:'Write the rule after /learn, for example: /learn Keep replies non-technical unless the customer asks for details.'}]);return;}
+    if(busy)return;
+    setChat(old=>[...old,{role:'owner',text:message}]);setBusy('learn');
+    try{await assistant('',{action:'learn',rule,thread_id:draft?.thread_id,draft_id:draft?.id});setChat(old=>[...old,{role:'assistant',text:`Saved to memory: ${rule}
+All future drafts will follow it.`,changed:true}]);}
+    catch(cause){setChat(old=>[...old,{role:'assistant',text:`Not saved to memory: ${(cause as Error).message}`}]);}
+    finally{setBusy('');}
   }
   async function writeAgain(){if(dirty&&!window.confirm('Write a completely new reply? Your edits to this draft will be replaced.'))return;await workflow('regenerate');}
   async function send(){
@@ -210,14 +251,18 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     {showBcc&&<label className="inline-ai-copy"><span>Bcc</span><input aria-label="Bcc recipients" placeholder="name@company.com" value={bcc} onChange={event=>setBcc(event.target.value)} disabled={!!busy}/><button type="button" className="text-button" aria-label="Remove Bcc" onClick={()=>{setBcc('');setShowBcc(false);}}><X size={13}/></button></label>}
     {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status" className="inline-ai-notice">{notice}{undoBody&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>{setBody(undoBody.body);setUndoBody(null);setNotice('Previous text restored. The quote is still attached; remove it below if needed.');}}><Undo2 size={13}/> Undo rewrite</button>}</p>}
     <div className="reply-canvas" onClick={event=>{if(event.target===event.currentTarget)editor.current?.focus();}}>
-      <textarea ref={editor} aria-label="Edit AI reply draft" value={body} onChange={event=>setBody(event.target.value)} disabled={!!busy}/>
+      <textarea ref={editor} aria-label="Edit AI reply draft" value={body} onChange={event=>history.typed(event.target.value)} onKeyDown={history.onKeyDown} disabled={!!busy}/>
       <SignatureField key={draft.id} onChange={setSignatureHtml} disabled={!!busy}/>
     </div>
     <div className="inline-ai-tweaks"><span>Change it:</span>{quickChanges.map(label=><button type="button" key={label} className="chip" disabled={!!busy} onClick={()=>void rewrite(label)}>{label}</button>)}</div>
     <div className="inline-ai-chat" aria-label="Ask AI about this customer">
       {(!!chat.length||busy==='assist')&&<div className="inline-ai-chat-log" role="log">{chat.map((turn,index)=><p key={index} className={`chat-turn ${turn.role}${turn.changed?' changed':''}`}>{turn.text}</p>)}{busy==='assist'&&<p className="chat-turn assistant pending">Checking this customer's history…</p>}<div ref={chatEnd}/></div>}
-      <form onSubmit={event=>{event.preventDefault();void ask(instruction);}}><MessageSquare size={15} aria-hidden="true"/><input aria-label="Ask AI or tell it what to change" placeholder="Ask about this customer (what did we quote last time?) or tell AI what to change…" value={instruction} onChange={event=>setInstruction(event.target.value)} disabled={!!busy}/><button type="submit" className="secondary compact" disabled={!!busy||!instruction.trim()}>{busy==='assist'?'Working…':'Ask'}</button></form>
-      <small>Knows this conversation, this person's earlier emails with DCX and their customer record.</small>
+      <form onSubmit={event=>{event.preventDefault();void ask(instruction);}}><MessageSquare size={15} aria-hidden="true"/>
+        <textarea ref={askBox} rows={1} aria-label="Ask AI or tell it what to change" placeholder={listening?'Listening… speak your instruction':'Ask about this customer, tell AI what to change, or type /learn to teach it a rule'} value={instruction} onChange={event=>setInstruction(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void ask(instruction);}}} disabled={!!busy}/>
+        {SpeechRecognition&&<button type="button" className={`icon-button inline-ai-mic${listening?' listening':''}`} aria-label={listening?'Stop voice input':'Speak instead of typing'} aria-pressed={listening} title={listening?'Stop listening':'Speak instead of typing'} disabled={!!busy} onClick={toggleVoice}>{listening?<MicOff size={15}/>:<Mic size={15}/>}</button>}
+        <button type="submit" className="secondary compact" disabled={!!busy||!instruction.trim()}>{busy==='assist'||busy==='learn'?'Working…':learnCommand.test(instruction.trim())?'Save':'Ask'}</button></form>
+      {instruction.startsWith('/')&&!learnCommand.test(instruction)&&<button type="button" className="inline-ai-command" onClick={()=>{setInstruction('/learn ');askBox.current?.focus();}}><strong>/learn</strong> rule — save to the AI's memory for all future emails</button>}
+      <small>Knows this conversation, this person's earlier emails with DCX and their customer record. Type <strong>/learn</strong> and a rule to make the AI remember it for every email. Shift+Enter adds a new line.</small>
     </div>
     <div className="inline-ai-files">
       <label className="text-button"><Paperclip size={14}/> Attach files<input type="file" multiple hidden onChange={event=>{if(event.target.files)addFiles(Array.from(event.target.files));event.target.value='';}} disabled={!!busy}/></label>

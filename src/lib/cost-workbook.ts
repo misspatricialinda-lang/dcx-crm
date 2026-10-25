@@ -42,9 +42,10 @@ export async function buildCostWorkbook(draft: QuoteDraft) {
     cell.value = value || null; cell.alignment = { vertical: 'middle', wrapText: true };
   };
   const saved = draft as Partial<SavedQuote>;
-  mergedText('L2:M2', saved.number ? `${saved.number} / R${saved.revision || 1}` : 'Working estimate');
-  mergedText('L3:M3', '');
-  sheet.mergeCells('L4:M4'); put('L4', new Date()); sheet.getCell('L4').numFmt = 'yyyy-mm-dd';
+  mergedText('L2:M2', draft.quoteNumber?.trim() || (saved.number ? `${saved.number} / R${saved.revision || 1}` : 'Working estimate'));
+  mergedText('L3:M3', draft.poNumber?.trim() || '');
+  const [year, month, day] = (draft.quoteDate || '').split('-').map(Number);
+  sheet.mergeCells('L4:M4'); put('L4', year && month && day ? new Date(year, month - 1, day) : new Date()); sheet.getCell('L4').numFmt = 'yyyy-mm-dd';
   put('K5', 'Currency'); mergedText('L5:M5', 'CAD');
   put('C5', draft.customerSnapshot?.name || 'Quick calculation');
   put('C8', draft.site);
