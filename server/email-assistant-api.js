@@ -34,8 +34,8 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
   try {
     // Supplier quotes live here (not their own /api file) to stay within the deployment's function limit.
     const supplierQuotes = input => supplierQuotesRequest({ db, env, session, method: req.method, url, input, transport: injected.fetch || fetch,
-      connect: async () => injected.graph ? { graph: injected.graph } : await delegatedGraphClient(env) });
-    if (req.method === 'GET' && url.searchParams.get('action') === 'rfq-list') { const result = await supplierQuotes(); return reply(res, result.status, result.body); }
+      connect: async () => injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await delegatedGraphClient(env) });
+    if (req.method === 'GET' && ['rfq-list', 'rfq-links', 'rfq-thread'].includes(url.searchParams.get('action'))) { const result = await supplierQuotes(); return reply(res, result.status, result.body); }
     if(req.method==='GET' && url.searchParams.get('action')==='signature') {
       const row=await checked(db.from('crm_email_signature').select('fields,enabled,banner_base64,banner_content_type,updated_at,updated_by').eq('id',1).maybeSingle());
       if(!row)return reply(res,200,{signature:null});

@@ -22,6 +22,10 @@ test('supplier quotes: write emails, send, and see who replied with their price'
       if (body.action === 'rfq-send') stage = 'sent';
       return route.fulfill({ json: { success: true } });
     }
+    if (new URL(route.request().url()).searchParams.get('action') === 'rfq-thread') return route.fulfill({ json: { messages: [
+      { id: 'request', direction: 'outgoing', sender: '', subject: 'Price request', occurred_at: '2026-11-02T14:05:00Z', text: 'Hello,\n\nCould you send your best price?' },
+      { id: 'm2', direction: 'incoming', sender: 'atlas@supplier.example', subject: 'RE: Price request', occurred_at: '2026-11-02T18:30:00Z', text: 'Hi, CAD 48.50 each, in stock.' },
+    ], can_reply: true } });
     const rows = stage === 'empty' ? [] : [{ ...rfq, status: stage === 'sent' ? 'open' : 'draft', recipients: stage === 'draft' ? suppliers.map(s => recipient(s, {})) : [
       recipient(suppliers[0], { status: 'replied', sent_at: '2026-11-02T14:05:00Z', replied_at: '2026-11-02T18:30:00Z', supplier_thread_id: '55555555-5555-4555-8555-555555555555', reply_read_at: '2026-11-02T18:31:00Z', price: 'CAD 48.50 each', lead_time: 'In stock, 2 days', reply_text: 'Hi, CAD 48.50 each, in stock.' }),
       recipient(suppliers[1], { status: 'sent', sent_at: '2026-11-02T14:05:00Z' }),
@@ -57,8 +61,16 @@ test('supplier quotes: write emails, send, and see who replied with their price'
   await expect(atlas).toContainText('CAD 48.50 each');
   await expect(atlas).toContainText('In stock, 2 days');
   await expect(card.locator('.sq-row', { hasText: 'Birch Batteries' })).toContainText('Waiting');
-  await atlas.getByRole('button', { name: 'View' }).click();
-  await expect(card.locator('.sq-reply')).toHaveText('Hi, CAD 48.50 each, in stock.');
+  // The whole email chain with Atlas, and a reply that stays in that conversation.
+  await atlas.getByRole('button', { name: 'Open' }).click();
+  const chain = card.getByLabel('Emails with Atlas Power (demo)');
+  await expect(chain.locator('.sq-msg.outgoing')).toContainText('Could you send your best price?');
+  await expect(chain.locator('.sq-msg.incoming')).toContainText('CAD 48.50 each');
+  await card.getByLabel('Reply to Atlas Power (demo)').fill('Thanks. Is shipping included?');
+  await card.getByRole('button', { name: 'Send reply' }).click();
+  expect(posted.at(-1)).toMatchObject({ action: 'rfq-reply', id: 'r-' + suppliers[0].id, body: 'Thanks. Is shipping included?' });
+  await atlas.getByRole('button', { name: 'Hide' }).click();
+  await expect(card.getByRole('button', { name: "Open customer's email" })).toBeVisible();
   await card.locator('.sq-row', { hasText: 'Birch Batteries' }).getByRole('button', { name: 'Remind' }).click();
   await expect(card.getByLabel(/Reminder to Birch/)).toHaveValue(/DCX-RFQ-1001/);
   await card.getByRole('button', { name: 'Send reminder' }).click();
@@ -66,4 +78,47 @@ test('supplier quotes: write emails, send, and see who replied with their price'
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test('supplier email in the inbox: Supplier tag, link to its request, no AI reply box', async ({ page }) => {
+  const message = (id: string, conversationId: string, from: string, subject: string) => ({
+    id, internetMessageId: `<${id}@example.com>`, conversationId, subject, bodyPreview: 'I think the price is 100 dollars.',
+    from: { emailAddress: { address: from, name: from } }, toRecipients: [{ emailAddress: { address: 'owner@example.com' } }],
+    receivedDateTime: '2026-11-02T10:00:00Z', isRead: true, isDraft: false, importance: 'normal', hasAttachments: false, parentFolderId: 'inbox', changeKey: 'v1',
+    body: { contentType: 'text', content: 'I think the price is 100 dollars.' },
+  });
+  const records = [message('m1', 'conv-supplier', 'atlas@supplier.example', 'RE: Price request [DCX-RFQ-1001]'), message('m2', 'conv-customer', 'buyer@customer.example', 'Battery quote')];
+  await page.route('**/api/auth', route => route.fulfill({ json: { configured: true, user: { email: 'owner@example.com' } } }));
+  await page.route('**/api/mail?*', route => {
+    const params = new URL(route.request().url()).searchParams, action = params.get('action');
+    const json = action === 'status' ? { connected: true, provider: 'microsoft', mailbox: 'owner@example.com', inboxId: 'inbox' }
+      : action === 'folders' ? { records: [{ id: 'inbox', displayName: 'Inbox', childFolderCount: 0, unreadItemCount: 0, totalItemCount: 2 }], next: null }
+      : action === 'messages' ? { records, next: null }
+      : action === 'thread' ? { records: records.filter(r => r.conversationId === params.get('conversationId')), next: null }
+      : action === 'message' ? { record: records.find(r => r.id === params.get('id')) || records[0] }
+      : { records: [], next: null };
+    return route.fulfill({ json });
+  });
+  await page.route('**/api/email-assistant**', route => {
+    const action = new URL(route.request().url()).searchParams.get('action');
+    if (action === 'rfq-links') return route.fulfill({ json: { suppliers: [{ name: 'Atlas Power (demo)', email: 'atlas@supplier.example' }], conversations: { 'conv-supplier': { rfq_id: 'rfq-1', reference: 'DCX-RFQ-1001', title: '8 × 12V 9Ah batteries', customer_label: 'buyer@customer.example', customer_thread_id: '44444444-4444-4444-8444-444444444444', supplier_name: 'Atlas Power (demo)' } } } });
+    return route.fulfill({ json: { records: [], draft: null } });
+  });
+  await page.route('**/api/followups**', route => route.fulfill({ json: { records: [], settings: { enabled: true, quote_days: [3, 7], question_days: [3, 7], lead_days: [7, 14] } } }));
+  await page.route('**/api/crm?*', route => route.fulfill({ json: { records: [], books: [], history: [] } }));
+  await page.route('**/api/notifications?*', route => route.fulfill({ json: { records: [], unread: 0 } }));
+  await page.route('**/api/tracking?*', route => route.fulfill({ json: { attention: 0, drafts: 0, waiting: 0, due: 0, recent: [] } }));
+  await page.goto('/#inbox');
+
+  await expect(page.locator('.thread-item', { hasText: 'DCX-RFQ-1001' }).locator('.supplier-tag')).toHaveText(/Supplier/);
+  await expect(page.locator('.thread-item', { hasText: 'Battery quote' }).locator('.supplier-tag')).toHaveCount(0);
+
+  await page.locator('.thread-item', { hasText: 'DCX-RFQ-1001' }).click();
+  const banner = page.locator('.supplier-banner');
+  await expect(banner).toContainText('Supplier email · Atlas Power (demo)');
+  await expect(banner).toContainText('DCX-RFQ-1001 · 8 × 12V 9Ah batteries · for buyer@customer.example');
+  await expect(page.getByRole('button', { name: 'Ask suppliers' })).toHaveCount(0);
+  await expect(page.locator('.inline-ai-reply, .ai-reply-panel')).toHaveCount(0);
+  await banner.getByRole('button', { name: 'Open in Supplier quotes' }).click();
+  await expect(page).toHaveURL(/#suppliers/);
 });

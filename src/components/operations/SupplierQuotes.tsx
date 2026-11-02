@@ -41,6 +41,8 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
     return mode === 'ask' && id ? { internetId: decodeURIComponent(id) } : null;
   });
   const [composer, setComposer] = useState(!!ask);
+  // The inbox links a supplier email to its request at #suppliers/rfq/<id>.
+  const [focus] = useState(() => { const [, mode, id] = location.hash.slice(1).split('/'); return mode === 'rfq' ? id || '' : ''; });
   const reading = useRef(new Set<string>());
 
   async function load() {
@@ -50,7 +52,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
     finally { setLoading(false); }
   }
   useEffect(() => {
-    if (ask) history.replaceState(null, '', '#suppliers');
+    if (ask || focus) history.replaceState(null, '', '#suppliers');
     void load();
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30000);
     return () => clearInterval(timer);
@@ -88,7 +90,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
     {loading ? <p className="sq-empty">Loading supplier requests…</p>
       : preview ? <p className="sq-empty">Supplier quotes need the live database.</p>
       : !visible.length ? <div className="sq-empty"><span><Mail size={26}/></span><h3>No requests here</h3><p>Open a customer's email in the Inbox and choose <b>Ask suppliers</b>, or start a new request.</p></div>
-      : visible.map(r => <RfqCard key={r.id} rfq={r} busy={busy} run={run} onOpenInbox={onOpenInbox}/>)}
+      : visible.map(r => <RfqCard key={r.id} rfq={r} busy={busy} run={run} onOpenInbox={onOpenInbox} focused={r.id === focus}/>)}
   </section>;
 }
 
@@ -111,15 +113,18 @@ function NewRequest({ suppliers, source, busy, onCancel, onCreate }: { suppliers
   </div>;
 }
 
-function RfqCard({ rfq, busy, run, onOpenInbox }: { rfq: Rfq; busy: string; run: (key: string, action: string, body: Record<string, unknown>, after?: (result: any) => void) => Promise<void>; onOpenInbox: (threadId: string) => void }) {
+function RfqCard({ rfq, busy, run, onOpenInbox, focused }: { rfq: Rfq; busy: string; run: (key: string, action: string, body: Record<string, unknown>, after?: (result: any) => void) => Promise<void>; onOpenInbox: (threadId: string) => void; focused: boolean }) {
   const drafts = rfq.recipients.filter(x => x.status === 'draft');
   const total = sentCount(rfq), answered = replied(rfq);
-  return <article className={`sq-card panel ${rfq.status}`}>
+  const node = useRef<HTMLElement>(null);
+  useEffect(() => { if (focused) node.current?.scrollIntoView({ block: 'start' }); }, [focused]);
+  return <article ref={node} className={`sq-card panel ${rfq.status} ${focused ? 'focused' : ''}`}>
     <header className="sq-card-head">
       <div>
         <span className="sq-ref">{rfq.reference}</span>
         <h2>{rfq.title}</h2>
-        <p>{rfq.customer_label ? <>For <b>{rfq.customer_label}</b> · </> : null}Created {when(rfq.created_at)}{rfq.thread_id && <> · <button className="text-button" onClick={() => onOpenInbox(rfq.thread_id!)}>Customer email <ExternalLink size={12}/></button></>}</p>
+        <p>{rfq.customer_label ? <>For <b>{rfq.customer_label}</b> · </> : null}Created {when(rfq.created_at)}</p>
+        {rfq.thread_id && <button className="secondary compact sq-customer-link" onClick={() => onOpenInbox(rfq.thread_id!)}><Mail size={14}/> Open customer's email <ExternalLink size={12}/></button>}
       </div>
       <div className="sq-card-status">
         {rfq.status === 'draft' ? <span className="pill neutral">Not sent</span>
@@ -155,41 +160,68 @@ function DraftEmail({ draft, busy, run, canRemove }: { draft: Recipient; busy: s
   </details>;
 }
 
+type ChainMessage = { id: string; direction: 'incoming' | 'outgoing'; sender: string; subject: string; occurred_at: string; text: string };
+
 function SupplierRow({ rfq, row, busy, run, onOpenInbox }: { rfq: Rfq; row: Recipient; busy: string; run: (key: string, action: string, body: Record<string, unknown>) => Promise<void>; onOpenInbox: (threadId: string) => void }) {
-  const [open, setOpen] = useState<'' | 'reply' | 'nudge'>('');
-  const [reminder, setReminder] = useState('');
+  const [open, setOpen] = useState(false);
+  const [chain, setChain] = useState<ChainMessage[] | null>(null);
+  const [chainError, setChainError] = useState('');
+  const [message, setMessage] = useState('');
+  const [version, setVersion] = useState(0);
   const [facts, setFacts] = useState({ price: row.price, lead_time: row.lead_time, notes: row.reply_notes });
   useEffect(() => setFacts({ price: row.price, lead_time: row.lead_time, notes: row.reply_notes }), [row.price, row.lead_time, row.reply_notes]);
   const isReplied = row.status === 'replied';
+  // The chain reloads when the row changes (a new reply arrives or we answered).
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    api<{ messages: ChainMessage[] }>(`rfq-thread&id=${encodeURIComponent(row.id)}`).then(result => { if (current) { setChain(result.messages); setChainError(''); } }).catch(cause => { if (current) setChainError((cause as Error).message); });
+    return () => { current = false; };
+  }, [open, row.updated_at, row.last_reply_at, version]);
+  function toggle() {
+    if (!open && !message && row.status === 'sent') setMessage(reminderText(row, rfq.reference));
+    setOpen(!open);
+  }
+  async function send() {
+    await run((isReplied ? 'reply:' : 'nudge:') + row.id, isReplied ? 'rfq-reply' : 'rfq-nudge', { id: row.id, body: message });
+    setMessage('');
+    setVersion(v => v + 1);
+  }
   return <>
-    <div className={`sq-row ${row.status}`} role="row">
+    <div className={`sq-row ${row.status} ${open ? 'open' : ''}`} role="row">
       <span className="sq-supplier">{isReplied ? <CheckCircle2 size={16} className="sq-ok"/> : <Clock3 size={16} className="sq-pending"/>}<span><b>{row.supplier_name}</b><small>{row.supplier_email}</small></span></span>
       <span data-label="Sent">{row.sent_at ? when(row.sent_at) : row.status === 'uncertain' ? <em className="sq-error">Not confirmed: check Sent Items</em> : '—'}{row.nudge_count > 0 && <small>Reminded {row.nudge_count}× · {when(row.last_nudged_at!)}</small>}</span>
-      <span data-label="Reply">{isReplied ? when(row.replied_at!) : row.sent_at ? <em>Waiting · {waited(row.sent_at)}</em> : '—'}</span>
+      <span data-label="Reply">{isReplied ? when(row.last_reply_at || row.replied_at!) : row.sent_at ? <em>Waiting · {waited(row.sent_at)}</em> : '—'}</span>
       <span data-label="Price">{isReplied ? (row.reply_read_at ? row.price || <em>Not stated</em> : <em>Reading…</em>) : ''}</span>
       <span data-label="Lead time">{isReplied && row.reply_read_at ? row.lead_time || <em>Not stated</em> : ''}</span>
       <span className="sq-actions">
-        {isReplied && <button className="secondary compact" onClick={() => setOpen(open === 'reply' ? '' : 'reply')}>{open === 'reply' ? 'Hide' : 'View'}</button>}
-        {row.status === 'sent' && <button className="text-button" onClick={() => { setReminder(reminder || reminderText(row, rfq.reference)); setOpen(open === 'nudge' ? '' : 'nudge'); }}><BellRing size={14}/> Remind</button>}
+        {row.status !== 'uncertain' && <button className={isReplied ? 'secondary compact' : 'text-button'} onClick={toggle}>{open ? 'Hide' : isReplied ? 'Open' : <><BellRing size={14}/> Remind</>}</button>}
       </span>
     </div>
-    {open === 'reply' && <div className="sq-detail">
-      <div className="sq-facts">
-        <label className="sq-label">Price<input value={facts.price} onChange={e => setFacts({ ...facts, price: e.target.value })}/></label>
-        <label className="sq-label">Lead time<input value={facts.lead_time} onChange={e => setFacts({ ...facts, lead_time: e.target.value })}/></label>
-        <label className="sq-label sq-wide">Notes<input value={facts.notes} onChange={e => setFacts({ ...facts, notes: e.target.value })}/></label>
-        <button className="secondary compact" disabled={!!busy || (facts.price === row.price && facts.lead_time === row.lead_time && facts.notes === row.reply_notes)} onClick={() => void run('correct:' + row.id, 'rfq-correct', { id: row.id, ...facts })}>Save</button>
+    {open && <div className="sq-detail">
+      {isReplied && <>
+        <div className="sq-facts">
+          <label className="sq-label">Price<input value={facts.price} onChange={e => setFacts({ ...facts, price: e.target.value })}/></label>
+          <label className="sq-label">Lead time<input value={facts.lead_time} onChange={e => setFacts({ ...facts, lead_time: e.target.value })}/></label>
+          <label className="sq-label sq-wide">Notes<input value={facts.notes} onChange={e => setFacts({ ...facts, notes: e.target.value })}/></label>
+          <button className="secondary compact" disabled={!!busy || (facts.price === row.price && facts.lead_time === row.lead_time && facts.notes === row.reply_notes)} onClick={() => void run('correct:' + row.id, 'rfq-correct', { id: row.id, ...facts })}>Save</button>
+        </div>
+        <p className="field-help">Filled in by the AI from the latest reply. <button className="text-button" disabled={!!busy} onClick={() => void run('read:' + row.id, 'rfq-read-reply', { id: row.id })}><Sparkles size={12}/> {busy === 'read:' + row.id ? 'Reading…' : 'Read again'}</button></p>
+      </>}
+      <div className="sq-chain" aria-label={`Emails with ${row.supplier_name}`}>
+        {chainError ? <p className="form-error">{chainError}</p> : !chain ? <p className="field-help">Loading emails…</p>
+          : chain.map(m => <div key={m.id} className={`sq-msg ${m.direction}`}>
+            <header><b>{m.direction === 'outgoing' ? 'You' : row.supplier_name}</b><time>{when(m.occurred_at)}</time></header>
+            <p>{m.text || '(No text)'}</p>
+          </div>)}
       </div>
-      <p className="field-help">Filled in by the AI from the reply. Check it against the email below.</p>
-      <pre className="sq-reply">{row.reply_text || 'The reply is still being read…'}</pre>
+      <label className="sq-label">{isReplied ? `Reply to ${row.supplier_name}` : `Reminder to ${row.supplier_name}`}
+        <textarea rows={isReplied ? 4 : 6} value={message} onChange={e => setMessage(e.target.value)} placeholder={isReplied ? 'e.g. Thanks. Please confirm the final price in CAD and whether shipping is included.' : ''}/></label>
       <div className="sq-draft-actions">
+        <button className="primary compact" disabled={!!busy || !message.trim()} onClick={() => void send()}><Send size={14}/> {busy === 'reply:' + row.id || busy === 'nudge:' + row.id ? 'Sending…' : isReplied ? 'Send reply' : 'Send reminder'}</button>
+        <small>Goes only to {row.supplier_email}, in the same email conversation.</small>
         {row.supplier_thread_id && <button className="text-button" onClick={() => onOpenInbox(row.supplier_thread_id!)}><ExternalLink size={14}/> Open in Inbox</button>}
-        <button className="text-button" disabled={!!busy} onClick={() => void run('read:' + row.id, 'rfq-read-reply', { id: row.id })}><Sparkles size={14}/> {busy === 'read:' + row.id ? 'Reading…' : 'Read again'}</button>
       </div>
-    </div>}
-    {open === 'nudge' && <div className="sq-detail">
-      <label className="sq-label">Reminder to {row.supplier_name}<textarea rows={6} value={reminder} onChange={e => setReminder(e.target.value)}/></label>
-      <div className="sq-draft-actions"><button className="primary compact" disabled={!!busy || !reminder.trim()} onClick={() => void run('nudge:' + row.id, 'rfq-nudge', { id: row.id, body: reminder }).then(() => setOpen(''))}><Send size={14}/> {busy === 'nudge:' + row.id ? 'Sending…' : 'Send reminder'}</button></div>
     </div>}
   </>;
 }

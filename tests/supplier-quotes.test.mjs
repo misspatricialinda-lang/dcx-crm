@@ -1,10 +1,10 @@
 import test from 'node:test'; import assert from 'node:assert/strict'; import { PGlite } from '@electric-sql/pglite'; import { readFile, readdir } from 'node:fs/promises';
-import { trackingDb } from './helpers/tracking-db.mjs'; import { supplierQuotesRequest } from '../server/supplier-quotes-api.js';
+import { trackingDb } from './helpers/tracking-db.mjs'; import { supplierLinks, supplierQuotesRequest, supplierThread } from '../server/supplier-quotes-api.js';
 
 async function database() {
   const pg = new PGlite(); await pg.exec('create role anon;create role authenticated;create role service_role;');
   for (const f of (await readdir('supabase/migrations')).filter(f => f.endsWith('.sql') && !f.includes('knowledge_foundation') && f < '202610050001').sort()) await pg.exec(await readFile('supabase/migrations/' + f, 'utf8'));
-  for (const f of ['202610060001_email_classifications', '202610060005_ai_email_classification', '202610060008_preserve_known_lead_relationship', '202610070002_email_signature', '202611020001_supplier_quotes']) await pg.exec(await readFile(`supabase/migrations/${f}.sql`, 'utf8'));
+  for (const f of ['202610060001_email_classifications', '202610060005_ai_email_classification', '202610060008_preserve_known_lead_relationship', '202610070002_email_signature', '202611020001_supplier_quotes', '202611020002_no_ai_drafts_for_suppliers']) await pg.exec(await readFile(`supabase/migrations/${f}.sql`, 'utf8'));
   return pg;
 }
 async function mailbox(pg) {
@@ -141,4 +141,62 @@ test('reminders go once per click to suppliers who have not answered', async t =
   const after = (await recipients(pg))[0];
   assert.equal(after.nudge_count, 1); assert.ok(after.last_nudged_at); assert.equal(after.status, 'sent');
   assert.equal((await call({ action: 'rfq-create', supplier_ids: [], request: 'x' })).status, 400);
+});
+
+test('no AI drafts on supplier conversations, by supplier type or request thread; manual drafts still allowed', async t => {
+  const pg = await database(); t.after(() => pg.close());
+  const { thread, mail } = await mailbox(pg);
+  await pg.query("insert into crm_customers(name,email,relationship_type) values('Atlas (demo)','atlas@supplier.example','supplier'),('Acme','buyer@customer.example','customer')");
+  const aiDraft = (th, msg, body = 'AI reply') => pg.query("insert into email_drafts(thread_id,reply_to_message_id,current_body,original_ai_body,to_addresses,subject,source_message_version) values($1,$2,$3,$3,'[]','RE',1) returning id", [th, msg, body]);
+  const count = async th => Number((await pg.query('select count(*) n from email_drafts where thread_id=$1 and deleted_at is null', [th])).rows[0].n);
+
+  const customer = await thread(); const fromCustomer = await mail(customer, { sender: 'buyer@customer.example', subject: 'Quote', body: 'Price please' });
+  await aiDraft(customer, fromCustomer); assert.equal(await count(customer), 1, 'customers still get AI drafts');
+
+  const supplier = await thread(); const fromSupplier = await mail(supplier, { sender: 'Atlas@Supplier.example', subject: 'Hello', body: 'New price list' });
+  await aiDraft(supplier, fromSupplier); assert.equal(await count(supplier), 0, 'a saved supplier never gets an AI draft');
+  await pg.query("insert into email_drafts(thread_id,reply_to_message_id,current_body,to_addresses,subject,source_message_version) values($1,$2,'My own reply','[]','RE',1)", [supplier, fromSupplier]);
+  assert.equal(await count(supplier), 1, 'the owner can still write their own reply');
+
+  // A request thread is a supplier conversation even when the address is no longer saved as a supplier.
+  await pg.query(`select crm_create_supplier_rfq($1)`, [{ title: 'Batteries', recipients: [{ supplier_name: 'Old', supplier_email: 'old@supplier.example', subject: 'Price request [{REF}]', body: 'Hi' }] }]);
+  await pg.query("update supplier_rfq_recipients set status='sent',sent_at=now()");
+  const rfqThread = await thread('conv-rfq'); const answer = await mail(rfqThread, { sender: 'old@supplier.example', subject: 'RE: Price request [DCX-RFQ-1001]', body: 'CAD 10' });
+  await aiDraft(rfqThread, answer); assert.equal(await count(rfqThread), 0);
+
+  // Inbox links: suppliers by address, and the request behind a conversation.
+  const links = await supplierLinks(trackingDb(pg));
+  assert.deepEqual(links.suppliers, [{ name: 'Atlas (demo)', email: 'atlas@supplier.example' }]);
+  assert.equal(links.conversations['conv-rfq'].reference, 'DCX-RFQ-1001');
+
+  // The chain shows our request (before Sent Items syncs) and then the reply.
+  const row = (await recipients(pg))[0];
+  const chain = await supplierThread(trackingDb(pg), row.id);
+  assert.deepEqual(chain.messages.map(m => [m.direction, m.text]), [['outgoing', 'Hi'], ['incoming', 'CAD 10']]);
+  assert.equal(chain.can_reply, true);
+});
+
+test('replying to a supplier from Supplier quotes stays in their conversation and goes only to them', async t => {
+  const pg = await database(); t.after(() => pg.close());
+  const db = trackingDb(pg); const { thread, mail } = await mailbox(pg);
+  await pg.query(`select crm_create_supplier_rfq($1)`, [{ title: 'Batteries', recipients: [{ supplier_name: 'Atlas', supplier_email: 'atlas@supplier.example', subject: 'Price request [{REF}]', body: 'Hi' }] }]);
+  await pg.query("update supplier_rfq_recipients set status='sent',sent_at=now()");
+  const th = await thread(); await mail(th, { sender: 'atlas@supplier.example', subject: 'RE: Price request [DCX-RFQ-1001]', body: 'About 100 dollars' });
+  const row = (await recipients(pg))[0];
+  const ref = (await pg.query('select provider_ref from email_messages where id=$1', [row.reply_message_id])).rows[0].provider_ref;
+  const calls = [];
+  const graph = async (path, { method = 'GET', body } = {}) => {
+    calls.push([method, path, body]);
+    if (path.endsWith('/createReply')) return { id: 'reply-1', body: { content: '<p>quoted</p>' } };
+    if (method === 'GET') return { id: 'reply-1', isDraft: true, subject: 'RE: Price request [DCX-RFQ-1001]', toRecipients: [{ emailAddress: { address: 'atlas@supplier.example' } }], ccRecipients: [], bccRecipients: [] };
+    return null;
+  };
+  const result = await supplierQuotesRequest({ db, env: {}, session: { email: 'owner' }, method: 'POST', url: new URL('http://x/'), input: { action: 'rfq-reply', id: row.id, body: 'Please confirm in CAD.' }, connect: async () => ({ graph, connection: { email_address: 'owner@outlook.com' } }) });
+  assert.equal(result.status, 200);
+  assert.equal(calls[0][1], `/messages/${ref}/createReply`);
+  assert.match(calls[1][2].body.content, /Please confirm in CAD\.[\s\S]*quoted/);
+  assert.deepEqual(calls[1][2].toRecipients, [{ emailAddress: { address: 'atlas@supplier.example' } }]);
+  assert.ok(calls.some(([method, path]) => method === 'POST' && path === '/messages/reply-1/send'));
+  const chain = await supplierThread(db, row.id);
+  assert.equal(chain.messages.at(-1).direction, 'outgoing'); assert.equal(chain.messages.at(-1).text, 'Please confirm in CAD.');
 });

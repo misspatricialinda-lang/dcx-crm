@@ -147,6 +147,14 @@ export function ConnectedInbox({
     </div>
   );
 }
+// Supplier mail is handled in Supplier quotes: it gets a Supplier tag, a link to its request, and no AI reply.
+type SupplierLink = { rfq_id: string; reference: string; title: string; customer_label: string; customer_thread_id: string | null; supplier_name: string };
+type SupplierLinks = { suppliers: { name: string; email: string }[]; conversations: Record<string, SupplierLink> };
+function supplierFor(links: SupplierLinks, conversationId: string, senders: (string | undefined)[]) {
+  const link = links.conversations[conversationId];
+  const supplier = links.suppliers.find(s => senders.some(address => address?.toLowerCase() === s.email));
+  return link || supplier ? { link, name: link?.supplier_name || supplier!.name } : null;
+}
 const AI_FOLDER = '__ai_drafts__';
 const AI_DISCARDED = '__ai_discarded__';
 const FOLLOW_FOLDER = '__followups__';
@@ -194,6 +202,11 @@ function MicrosoftInbox({
   const [followups, setFollowups] = useState<FollowupRecord[]>([]);
   const [followupSettings, setFollowupSettings] = useState<FollowupSettings>();
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [supplierLinks, setSupplierLinks] = useState<SupplierLinks>({ suppliers: [], conversations: {} });
+  useEffect(() => {
+    const refresh = () => void fetch('/api/email-assistant?action=rfq-links', { cache: 'no-store', credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(result => { if (result?.suppliers) setSupplierLinks(result); }).catch(() => {});
+    refresh(); const timer = setInterval(refresh, 120000); return () => clearInterval(timer);
+  }, []);
   const loadFollowups = useCallback(async () => {
     try { const result = await followupRequest<{ records: FollowupRecord[]; settings: FollowupSettings }>('list'); setFollowups(result.records || []); setFollowupSettings(result.settings); }
     catch { /* Follow-up tags are optional; the mailbox stays usable. */ }
@@ -826,6 +839,7 @@ function MicrosoftInbox({
                         {t.messages.length === 1 ? "" : "s"}
                       </span>
                       {draftKeys.has(t.id) && <span className="pill ai-draft-tag"><Sparkles size={11} /> AI draft</span>}{followupByKey.get(t.id)?.due && <span className="pill followup-tag due"><AlarmClock size={11} /> Follow up</span>}
+                      {supplierFor(supplierLinks, t.id, t.messages.map(m => m.from?.emailAddress.address)) && <span className="pill supplier-tag"><PackageSearch size={11} /> Supplier</span>}
                       {t.latest.isDraft && (
                         <span className="pill amber">Draft</span>
                       )}
@@ -911,6 +925,7 @@ function MicrosoftInbox({
             onBack={() => { if (canLeave()) { dirty.current = false; setPhoneReading(false); setOpenThreads([]); } }}
             followup={followupByKey.get(openId)}
             onFollowupChanged={() => void loadFollowups()}
+            supplierLinks={supplierLinks}
             backLabel={aiView ? 'AI drafts' : followView ? 'Follow-ups' : folders.find((f) => f.id === folder)?.displayName || 'Inbox'}
           />
         ) : (
@@ -982,6 +997,7 @@ function LiveConversation({
   backLabel,
   followup,
   onFollowupChanged,
+  supplierLinks,
 }: {
   id: string;
   revision: number;
@@ -1003,6 +1019,7 @@ function LiveConversation({
   backLabel: string;
   followup?: FollowupRecord;
   onFollowupChanged: () => void;
+  supplierLinks: SupplierLinks;
 }) {
   const aiDirty = useRef(false);
   const [messages, setMessages] = useState<MicrosoftMessage[]>([]);
@@ -1089,6 +1106,7 @@ function LiveConversation({
   }, [id, revision, onLoaded]);
   const latest = messages[messages.length - 1];
   const latestIncoming = [...messages].reverse().find(m => !m.isDraft && m.from?.emailAddress.address?.toLowerCase() !== mailbox.toLowerCase());
+  const supplier = supplierFor(supplierLinks, id, messages.map(m => m.from?.emailAddress.address));
   const senderEmails = messages
     .filter((m) => !m.isDraft)
     .map((m) => m.from?.emailAddress.address?.toLowerCase());
@@ -1161,7 +1179,15 @@ function LiveConversation({
         </span>
         <h2>{latest?.subject || "Conversation"}</h2>
         {provider === "microsoft" && <FollowupBar followup={followup} conversationKey={id} onChanged={onFollowupChanged} />}
-        {provider === "microsoft" && latestIncoming?.internetMessageId && <button type="button" className="text-button ask-suppliers" onClick={() => {
+        {supplier && <div className="supplier-banner">
+          <PackageSearch size={16} />
+          <div><strong>Supplier email · {supplier.name}</strong>{supplier.link ? <span>{supplier.link.reference} · {supplier.link.title}{supplier.link.customer_label ? ` · for ${supplier.link.customer_label}` : ''}</span> : <span>Supplier conversations are handled in Supplier quotes. No AI reply is written.</span>}</div>
+          <div className="supplier-banner-actions">
+            <button type="button" className="secondary compact" onClick={() => { if (window.dispatchEvent(new Event("dcx-before-navigate", { cancelable: true }))) location.hash = supplier.link ? `suppliers/rfq/${supplier.link.rfq_id}` : 'suppliers'; }}>Open in Supplier quotes</button>
+            {supplier.link?.customer_thread_id && <button type="button" className="text-button" onClick={() => window.dispatchEvent(new CustomEvent('dcx-open-ai', { detail: supplier.link!.customer_thread_id }))}>Customer's email</button>}
+          </div>
+        </div>}
+        {provider === "microsoft" && !supplier && latestIncoming?.internetMessageId && <button type="button" className="text-button ask-suppliers" onClick={() => {
           // Opens Supplier quotes with this email; the unsaved-reply guard runs first.
           if (window.dispatchEvent(new Event("dcx-before-navigate", { cancelable: true }))) location.hash = `suppliers/ask/${encodeURIComponent(latestIncoming.internetMessageId!)}`;
         }}><PackageSearch size={14} /> Ask suppliers</button>}
@@ -1227,7 +1253,7 @@ function LiveConversation({
             customers={customers}
             customerId={matches.length === 1 ? matches[0].id : undefined}
           />{hasAiDraft && <p className="field-help">An AI draft is also waiting for this conversation. Close this editor to review it.</p>}</div>
-        ) : latestIncoming && (
+        ) : latestIncoming && !supplier && (
           <InlineAiReply
             internetId={latestIncoming.internetMessageId}
             sourceMessageId={latestIncoming.id}
