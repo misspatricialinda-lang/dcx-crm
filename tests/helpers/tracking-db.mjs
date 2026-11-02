@@ -14,6 +14,7 @@ export function trackingDb(pg) {
           sql=`insert into ${table}(${entries.map(([k])=>k)}) values(${entries.map(([,v])=>bind(v))})`;
           if(mode==='upsert')sql+=` on conflict(${conflict}) do update set ${entries.map(([k])=>`${k}=excluded.${k}`).join(',')}`;
         }
+        if(mode==='delete')sql=`delete from ${table}`;
         if(mode==='update')sql=`update ${table} set ${Object.entries(data).map(([k,v])=>`${k}=${bind(v)}`).join(',')}`;
         if(conditions.length)sql+=' where '+conditions.join(' and ');
         if(mode==='select') {if(orders.length)sql+=' order by '+orders.join(',');if(limit)sql+=' limit '+limit;}
@@ -25,12 +26,14 @@ export function trackingDb(pg) {
         is(k,v){if(v!==null)throw new Error('Only null IS supported');conditions.push(`${k} is null`);return query;},
         eq(k,v){conditions.push(`${k}=${bind(v)}`);return query;},
         neq(k,v){conditions.push(`${k}<>${bind(v)}`);return query;},
+        in(k,list){values.push(list);conditions.push(`${k}::text = any($${values.length}::text[])`);return query;},
         gt(k,v){conditions.push(`${k}>${bind(v)}`);return query;},
         order(k,o={}){orders.push(k+(o.ascending===false?' desc':' asc'));return query;},
         limit(n){limit=n;return query;},
         upsert(row,options){mode='upsert';data=row;conflict=options.onConflict;return query;},
         insert(row){mode='insert';data=row;return query;},
         update(row){mode='update';data=row;return query;},
+        delete(){mode='delete';return query;},
         async single(){const r=await run();return {...r,data:r.data?.[0]};},
         async maybeSingle(){const r=await run();return {...r,data:r.data?.[0]||null};},
         then(resolve,reject){return run().then(resolve,reject);}

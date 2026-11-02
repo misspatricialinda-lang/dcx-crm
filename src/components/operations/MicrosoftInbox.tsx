@@ -7,6 +7,7 @@ import { FollowupBar, FollowupRules, followupDate, followupLabels, followupReque
 import DOMPurify from "dompurify";
 import {
   AlarmClock,
+  PackageSearch,
   Archive,
   ChevronDown,
   ChevronLeft,
@@ -1160,6 +1161,10 @@ function LiveConversation({
         </span>
         <h2>{latest?.subject || "Conversation"}</h2>
         {provider === "microsoft" && <FollowupBar followup={followup} conversationKey={id} onChanged={onFollowupChanged} />}
+        {provider === "microsoft" && latestIncoming?.internetMessageId && <button type="button" className="text-button ask-suppliers" onClick={() => {
+          // Opens Supplier quotes with this email; the unsaved-reply guard runs first.
+          if (window.dispatchEvent(new Event("dcx-before-navigate", { cancelable: true }))) location.hash = `suppliers/ask/${encodeURIComponent(latestIncoming.internetMessageId!)}`;
+        }}><PackageSearch size={14} /> Ask suppliers</button>}
         <p className="field-help">
           History includes matching messages from your mailbox folders.
         </p>

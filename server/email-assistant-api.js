@@ -4,6 +4,7 @@ import { n8nConfig } from './n8n-config.js';
 import { cleanSignatureFields, signatureHtml, signatureRows } from './email-signature.js';
 import { discardPreparedReply, prepareAiReply, sendAiDraft } from './draft-send.js';
 import { delegatedGraphClient } from './microsoft-oauth.js';
+import { supplierQuotesRequest } from './supplier-quotes-api.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
 const actionable = draft => draft && !draft.deleted_at && !['sent', 'sending', 'submitted', 'uncertain'].includes(draft.status) && !!draft.original_ai_body;
@@ -31,6 +32,10 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
   const db = injected.db || createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const url = new URL(req.url || '/', 'http://localhost');
   try {
+    // Supplier quotes live here (not their own /api file) to stay within the deployment's function limit.
+    const supplierQuotes = input => supplierQuotesRequest({ db, env, session, method: req.method, url, input, transport: injected.fetch || fetch,
+      connect: async () => injected.graph ? { graph: injected.graph } : await delegatedGraphClient(env) });
+    if (req.method === 'GET' && url.searchParams.get('action') === 'rfq-list') { const result = await supplierQuotes(); return reply(res, result.status, result.body); }
     if(req.method==='GET' && url.searchParams.get('action')==='signature') {
       const row=await checked(db.from('crm_email_signature').select('fields,enabled,banner_base64,banner_content_type,updated_at,updated_by').eq('id',1).maybeSingle());
       if(!row)return reply(res,200,{signature:null});
@@ -93,6 +98,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     }
     if (req.method !== 'POST') return reply(res, 400, { error: 'Unknown AI reply request.' });
     const input = await bodyOf(req);
+    if (typeof input?.action === 'string' && input.action.startsWith('rfq-')) { const result = await supplierQuotes(input); return reply(res, result.status, result.body); }
     if (input?.action === 'signature') {
       let fields;
       try { fields = cleanSignatureFields(input.fields); } catch (error) { return reply(res, 400, { error: error.message }); }

@@ -15,11 +15,13 @@ import {
   CalendarDays,
   FileText,
   Lightbulb,
+  PackageSearch,
 } from "lucide-react";
 import { CustomerHub } from "./components/operations/CustomerHub";
 import { QuotationLanding } from "./components/operations/QuotationLanding";
 import { NotificationsPage } from "./components/operations/NotificationsPage";
 import { FeatureRequestsPage } from "./components/operations/FeatureRequestsPage";
+import { SupplierQuotes } from "./components/operations/SupplierQuotes";
 import { toClient, crmRequest } from "./lib/crm-client";
 import { withPreviewExample } from "./lib/preview-example";
 import { LoginGate } from "./components/Login";
@@ -54,6 +56,7 @@ const nav = [
   { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "customers", label: "Customers", icon: Users },
   { id: "quotations", label: "Quotations", icon: FileText },
+  { id: "suppliers", label: "Supplier quotes", icon: PackageSearch },
   { id: "calculator", label: "Cost calculator", icon: Calculator },
   { id: "calendar-agent", label: "Calendar Agent", icon: CalendarDays },
   { id: "notifications", label: "Notifications", icon: Bell },
@@ -486,6 +489,7 @@ function Dashboard({
                 )}
               />
             )}
+            {tab === "suppliers" && <SupplierQuotes preview={preview} onOpenInbox={(threadId) => navigate('inbox', threadId)} />}
             {tab === "quotations" && <QuotationLanding preview={preview} data={data} onLoaded={setCloudCustomers} />}
             {tab === "calculator" && (
               <>

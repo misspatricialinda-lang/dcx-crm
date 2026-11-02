@@ -185,6 +185,9 @@ export async function trackingHandler(req,res,env=process.env,injected={}) {
         const thread=await getThread(id);
         const drafts=await checked(db.from('email_drafts').select('id').eq('thread_id',id).is('deleted_at',null).neq('status','sent').limit(1));
         const latest=await checked(db.from('email_messages').select('direction,occurred_at').eq('thread_id',id).order('occurred_at',{ascending:false}).limit(1).maybeSingle());
+        // Supplier answers to our price requests are tracked in Supplier quotes, not answered by the AI.
+        const supplierThread=await db.from('supplier_rfq_recipients').select('id').eq('supplier_thread_id',id).limit(1);
+        if(supplierThread.data?.length)continue;
         // Initial history imports must not generate years of obsolete replies.
         if(thread.status==='needs_attention'&&!drafts.length&&latest?.direction==='incoming'&&Date.parse(latest.occurred_at)>=Date.now()-7*86400000) await command('queue_draft',{thread_id:id,request_id:`auto:${id}:${thread.message_version}`});
       }
