@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BellRing, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { BellRing, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, Send, Sparkles, Trash2, X } from 'lucide-react';
 
 type Supplier = { id: string; name: string; contact: string | null; email: string };
 type Recipient = {
@@ -79,7 +79,6 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
       <div className="sq-hero-icon"><PackageSearch size={26}/></div>
       <div><span className="sq-eyebrow">PRICE REQUESTS TO SUPPLIERS</span><h1>Supplier quotes</h1><p>Ask several suppliers at once and see who has answered.</p></div>
       <div className="sq-hero-actions">
-        <button className="secondary compact" onClick={() => void load()} disabled={loading} aria-label="Refresh"><RefreshCw size={16}/></button>
         <button className="primary" onClick={() => { setAsk(null); setComposer(true); }}><Plus size={16}/> New request</button>
       </div>
     </div>
