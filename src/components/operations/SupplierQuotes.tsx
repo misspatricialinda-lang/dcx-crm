@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BellRing, CheckCircle2, Clock3, ExternalLink, Mail, PackageSearch, Plus, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { BellRing, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react';
 
 type Supplier = { id: string; name: string; contact: string | null; email: string };
 type Recipient = {
@@ -139,7 +139,7 @@ function RfqCard({ rfq, busy, run, onOpenInbox, focused }: { rfq: Rfq; busy: str
       <div className="sq-send"><button className="primary" disabled={!!busy} onClick={() => void run('send:' + rfq.id, 'rfq-send', { rfq_id: rfq.id })}><Send size={15}/> {busy === 'send:' + rfq.id ? 'Sending…' : `Send to ${drafts.length} supplier${drafts.length === 1 ? '' : 's'}`}</button><small>Each supplier gets their own email from your Outlook mailbox, with your signature.</small></div>
     </div>}
     {total > 0 && <div className="sq-table" role="table">
-      <div className="sq-row sq-row-head" role="row"><span>Supplier</span><span>Sent</span><span>Reply</span><span>Price</span><span>Lead time</span><span/></div>
+      <div className="sq-row sq-row-head" role="row"><span>Supplier</span><span>Sent</span><span>Reply</span><span>Price</span><span>Delivery time</span><span/></div>
       {rfq.recipients.filter(x => x.status !== 'draft').map(x => <SupplierRow key={x.id} rfq={rfq} row={x} busy={busy} run={run} onOpenInbox={onOpenInbox}/>)}
     </div>}
   </article>;
@@ -188,12 +188,13 @@ function SupplierRow({ rfq, row, busy, run, onOpenInbox }: { rfq: Rfq; row: Reci
     setVersion(v => v + 1);
   }
   return <>
-    <div className={`sq-row ${row.status} ${open ? 'open' : ''}`} role="row">
+    <div className={`sq-row ${row.status} ${open ? 'open' : ''} ${row.status !== 'uncertain' ? 'clickable' : ''}`} role="row" aria-expanded={open}
+      onClick={event => { if (row.status !== 'uncertain' && !(event.target as HTMLElement).closest('button,a,input,textarea')) toggle(); }}>
       <span className="sq-supplier">{isReplied ? <CheckCircle2 size={16} className="sq-ok"/> : <Clock3 size={16} className="sq-pending"/>}<span><b>{row.supplier_name}</b><small>{row.supplier_email}</small></span></span>
       <span data-label="Sent">{row.sent_at ? when(row.sent_at) : row.status === 'uncertain' ? <em className="sq-error">Not confirmed: check Sent Items</em> : '—'}{row.nudge_count > 0 && <small>Reminded {row.nudge_count}× · {when(row.last_nudged_at!)}</small>}</span>
       <span data-label="Reply">{isReplied ? when(row.last_reply_at || row.replied_at!) : row.sent_at ? <em>Waiting · {waited(row.sent_at)}</em> : '—'}</span>
       <span data-label="Price">{isReplied ? (row.reply_read_at ? row.price || <em>Not stated</em> : <em>Reading…</em>) : ''}</span>
-      <span data-label="Lead time">{isReplied && row.reply_read_at ? row.lead_time || <em>Not stated</em> : ''}</span>
+      <span data-label="Delivery time">{isReplied && row.reply_read_at ? row.lead_time || <em>Not stated</em> : ''}</span>
       <span className="sq-actions">
         {row.status !== 'uncertain' && <button className={isReplied ? 'secondary compact' : 'text-button'} onClick={toggle}>{open ? 'Hide' : isReplied ? 'Open' : <><BellRing size={14}/> Remind</>}</button>}
       </span>
@@ -202,7 +203,7 @@ function SupplierRow({ rfq, row, busy, run, onOpenInbox }: { rfq: Rfq; row: Reci
       {isReplied && <>
         <div className="sq-facts">
           <label className="sq-label">Price<input value={facts.price} onChange={e => setFacts({ ...facts, price: e.target.value })}/></label>
-          <label className="sq-label">Lead time<input value={facts.lead_time} onChange={e => setFacts({ ...facts, lead_time: e.target.value })}/></label>
+          <label className="sq-label" title="How soon the supplier can deliver or ship, e.g. in stock, 3 weeks">Delivery time<input value={facts.lead_time} onChange={e => setFacts({ ...facts, lead_time: e.target.value })}/></label>
           <label className="sq-label sq-wide">Notes<input value={facts.notes} onChange={e => setFacts({ ...facts, notes: e.target.value })}/></label>
           <button className="secondary compact" disabled={!!busy || (facts.price === row.price && facts.lead_time === row.lead_time && facts.notes === row.reply_notes)} onClick={() => void run('correct:' + row.id, 'rfq-correct', { id: row.id, ...facts })}>Save</button>
         </div>
@@ -211,7 +212,7 @@ function SupplierRow({ rfq, row, busy, run, onOpenInbox }: { rfq: Rfq; row: Reci
       <div className="sq-chain" aria-label={`Emails with ${row.supplier_name}`}>
         {chainError ? <p className="form-error">{chainError}</p> : !chain ? <p className="field-help">Loading emails…</p>
           : chain.map(m => <div key={m.id} className={`sq-msg ${m.direction}`}>
-            <header><b>{m.direction === 'outgoing' ? 'You' : row.supplier_name}</b><time>{when(m.occurred_at)}</time></header>
+            <header><b>{m.direction === 'outgoing' ? 'You' : row.supplier_name}</b><span><time>{when(m.occurred_at)}</time><CopyButton text={m.text}/></span></header>
             <p>{m.text || '(No text)'}</p>
           </div>)}
       </div>
@@ -224,4 +225,12 @@ function SupplierRow({ rfq, row, busy, run, onOpenInbox }: { rfq: Rfq; row: Reci
       </div>
     </div>}
   </>;
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
+  }
+  return <button type="button" className="sq-copy" onClick={() => void copy()} aria-label="Copy this email">{copied ? <><Check size={12}/> Copied</> : <><Copy size={12}/> Copy</>}</button>;
 }

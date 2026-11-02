@@ -69,7 +69,12 @@ test('supplier quotes: write emails, send, and see who replied with their price'
   await card.getByLabel('Reply to Atlas Power (demo)').fill('Thanks. Is shipping included?');
   await card.getByRole('button', { name: 'Send reply' }).click();
   expect(posted.at(-1)).toMatchObject({ action: 'rfq-reply', id: 'r-' + suppliers[0].id, body: 'Thanks. Is shipping included?' });
-  await atlas.getByRole('button', { name: 'Hide' }).click();
+  // Clicking the supplier's row closes it again; the copy button copies that email.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await chain.locator('.sq-msg.incoming').getByRole('button', { name: 'Copy this email' }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Hi, CAD 48.50 each, in stock.');
+  await atlas.locator('.sq-supplier').click();
+  await expect(chain).toHaveCount(0);
   await expect(card.getByRole('button', { name: "Open customer's email" })).toBeVisible();
   await card.locator('.sq-row', { hasText: 'Birch Batteries' }).getByRole('button', { name: 'Remind' }).click();
   await expect(card.getByLabel(/Reminder to Birch/)).toHaveValue(/DCX-RFQ-1001/);

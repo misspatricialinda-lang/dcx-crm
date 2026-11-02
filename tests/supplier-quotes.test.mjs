@@ -173,6 +173,10 @@ test('no AI drafts on supplier conversations, by supplier type or request thread
   const row = (await recipients(pg))[0];
   const chain = await supplierThread(trackingDb(pg), row.id);
   assert.deepEqual(chain.messages.map(m => [m.direction, m.text]), [['outgoing', 'Hi'], ['incoming', 'CAD 10']]);
+  // A synced sent copy holding only the 255-character preview shows the full request text instead.
+  await mail(rfqThread, { direction: 'outgoing', sender: 'owner@outlook.com', to: ['old@supplier.example'], subject: row.subject, body: 'H' });
+  const synced = await supplierThread(trackingDb(pg), row.id);
+  assert.deepEqual(synced.messages.map(m => m.text), ['CAD 10', 'Hi']);
   assert.equal(chain.can_reply, true);
 });
 
