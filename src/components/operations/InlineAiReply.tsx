@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, FilePlus, MailX, MessageSquare, Mic, MicOff, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowRight, Brain, FilePlus, MailX, MessageSquare, Mic, MicOff, Paperclip, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, X } from 'lucide-react';
 import type { Client } from '../../types/operations';
 import { trackingRequest } from '../../lib/email-tracking';
 import { crmRequest, toClient } from '../../lib/crm-client';
@@ -165,7 +165,7 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
   }
   async function listRules(message:string){
     setInstruction('');setChat(old=>[...old,{role:'owner',text:message}]);
-    try{const {rules}=await assistant<{rules:{rule:string;active:boolean}[]}>('action=rules');const active=rules.filter(r=>r.active);
+    try{const {rules}=await assistant<{rules:{rule:string;active:boolean;scope?:string}[]}>('action=rules');const active=rules.filter(r=>r.active&&r.scope!=='supplier');
       setChat(old=>[...old,{role:'assistant',text:active.length?`Rules every draft follows (newest first):\n${active.map((r,i)=>`${i+1}. ${r.rule}`).join('\n')}\n\nEdit or turn them off on the AI memory page (#ai-memory).`:'No rules saved yet. Type /learn and a rule, or correct a draft and choose "Remember".'}]);}
     catch(cause){setChat(old=>[...old,{role:'assistant',text:`Could not load rules: ${(cause as Error).message}`}]);}
   }
@@ -277,11 +277,11 @@ All future drafts will follow it.`,changed:true}]);}
         {turn.rule&&<div className="chat-rule">{turn.ruleState==='saving'?<span>Saving to AI memory…</span>:turn.ruleState==='failed'?<span>Could not save to AI memory. Type /learn and the rule to try again.</span>:<span>Saved to AI memory. Every future email will follow: <b>{turn.rule}</b></span>}</div>}
       </div>)}{busy==='assist'&&<p className="chat-turn assistant pending">Checking this customer's history…</p>}<div ref={chatEnd}/></div>}
       <form onSubmit={event=>{event.preventDefault();void ask(instruction);}}><MessageSquare size={15} aria-hidden="true"/>
-        <textarea ref={askBox} rows={1} aria-label="Ask AI or tell it what to change" placeholder={listening?'Listening… speak your instruction':'Ask about this customer, tell AI what to change, or type /learn to teach it a rule'} value={instruction} onChange={event=>setInstruction(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void ask(instruction);}}} disabled={!!busy}/>
+        <textarea ref={askBox} rows={1} aria-label="Ask AI or tell it what to change" placeholder={listening?'Listening…':'Ask AI, or /learn to teach it'} value={instruction} onChange={event=>setInstruction(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void ask(instruction);}}} disabled={!!busy}/>
         {SpeechRecognition&&<button type="button" className={`icon-button inline-ai-mic${listening?' listening':''}`} aria-label={listening?'Stop voice input':'Speak instead of typing'} aria-pressed={listening} title={listening?'Stop listening':'Speak instead of typing'} disabled={!!busy} onClick={toggleVoice}>{listening?<MicOff size={15}/>:<Mic size={15}/>}</button>}
         <button type="submit" className="secondary compact" disabled={!!busy||!instruction.trim()}>{busy==='assist'||busy==='learn'?'Working…':learnCommand.test(instruction.trim())?'Save':'Ask'}</button></form>
       {instruction.startsWith('/')&&!learnCommand.test(instruction)&&!rulesCommand.test(instruction)&&<div className="inline-ai-commands"><button type="button" className="inline-ai-command" onClick={()=>{setInstruction('/learn ');askBox.current?.focus();}}><strong>/learn</strong> rule — save to the AI's memory for all future emails</button><button type="button" className="inline-ai-command" onClick={()=>void ask('/rules')}><strong>/rules</strong> — show what the AI has learned</button></div>}
-      <small>Knows this conversation, this person's earlier emails with DCX and their customer record. When you correct something that should apply to every email, the AI saves it to its memory automatically; or type <strong>/learn</strong> and a rule. Shift+Enter adds a new line.</small>
+      <a className="inline-ai-memory-link" href="#ai-memory" target="_blank" rel="noopener" title="View and edit what the AI has learned"><Brain size={13} aria-hidden="true"/> AI memory</a>
     </div>
     <div className="inline-ai-files">
       <label className="text-button"><Paperclip size={14}/> Attach files<input type="file" multiple hidden onChange={event=>{if(event.target.files)addFiles(Array.from(event.target.files));event.target.value='';}} disabled={!!busy}/></label>

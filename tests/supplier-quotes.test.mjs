@@ -236,8 +236,8 @@ test('suppliers can be added and removed from Supplier quotes, saved as Customer
 
 test('Tell AI what to change rewrites every unsent email in the request and saves a general correction to AI memory', async t => {
   const pg = await database(); t.after(() => pg.close());
-  await pg.exec("create table ai_owner_rules(id uuid primary key default gen_random_uuid(), rule text not null, active boolean not null default true, created_by text not null, source text not null default 'learn', created_at timestamptz not null default now())");
-  await pg.query("insert into ai_owner_rules(rule,created_by) values('Keep emails short.','owner@dcx.example')");
+  await pg.exec("create table ai_owner_rules(id uuid primary key default gen_random_uuid(), rule text not null, active boolean not null default true, created_by text not null, source text not null default 'learn', scope text not null default 'customer', created_at timestamptz not null default now())");
+  await pg.query("insert into ai_owner_rules(rule,created_by,scope) values('Keep emails short.','owner@dcx.example','supplier'),('Ask customers for their city.','owner@dcx.example','customer')");
   const db = trackingDb(pg);
   const rfq = (await pg.query(`select crm_create_supplier_rfq($1) r`, [{ title: 'Eaton 93PX batteries', recipients: [
     { supplier_name: 'Atlas', supplier_email: 'atlas@supplier.example', subject: 'Price request [{REF}]', body: 'Hi Sam,\n\nPlease quote Eaton 93PX batteries.\nUnit price in CAD, lead time and validity please.\n\nRef: {REF}\n\nThank you,' },
@@ -249,13 +249,15 @@ test('Tell AI what to change rewrites every unsent email in the request and save
   const [atlas] = await recipients(pg);
   const result = await call({ action: 'rfq-rewrite', id: atlas.id, instruction: 'why ask CAD and lead time and validity, dont' });
   assert.equal(result.status, 200); assert.equal(result.body.changed, 2);
-  assert.match(ai[0].instructions, /^OWNER RULES[\s\S]*1\. Keep emails short\./);
+  assert.match(ai[0].instructions, /^OWNER RULES FOR SUPPLIER EMAILS[\s\S]*1\. Keep emails short\./);
+  // Inbox (customer) rules never reach the supplier AI.
+  assert.doesNotMatch(ai[0].instructions, /Ask customers for their city/);
   assert.match(ai[0].input[0].content[0].text, /^CURRENT EMAIL\nPlease quote Eaton 93PX batteries\./);
   const [a, b] = await recipients(pg);
   assert.equal(a.body, `Hi Sam,\n\nCan you please quote me batteries for an Eaton 93PX UPS?\n\nRef: DCX-RFQ-${rfq.number}\n\nThank you,`);
   assert.equal(b.body, `Hi,\n\nCan you please quote me batteries for an Eaton 93PX UPS?\n\nRef: DCX-RFQ-${rfq.number}\n\nThank you,`);
-  const saved = (await pg.query("select rule,source from ai_owner_rules order by created_at desc limit 1")).rows[0];
-  assert.deepEqual(saved, { rule: "In price requests to suppliers, don't ask for currency, lead time or how long the price is valid.", source: 'chat' });
+  const saved = (await pg.query("select rule,source,scope from ai_owner_rules order by created_at desc limit 1")).rows[0];
+  assert.deepEqual(saved, { rule: "In price requests to suppliers, don't ask for currency, lead time or how long the price is valid.", source: 'chat', scope: 'supplier' });
   // Sent emails are never rewritten.
   await pg.query("update supplier_rfq_recipients set status='sent' where id=$1", [atlas.id]);
   assert.equal((await call({ action: 'rfq-rewrite', id: atlas.id, instruction: 'shorter' })).status, 409);

@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 const rules = [
   { id: '11111111-1111-4111-8111-111111111111', rule: 'Do not mention historical prices in replies; say we are checking current pricing and availability with our supplier instead.', active: true, source: 'chat', source_thread_id: '22222222-2222-4222-8222-222222222222', created_by: 'owner@example.com', created_at: '2026-11-08T10:00:00Z', updated_at: '2026-11-08T10:00:00Z', updated_by: null },
   { id: '33333333-3333-4333-8333-333333333333', rule: 'Keep replies short and non-technical unless the customer asks for details.', active: true, source: 'learn', source_thread_id: null, created_by: 'owner@example.com', created_at: '2026-11-01T10:00:00Z', updated_at: '2026-11-03T10:00:00Z', updated_by: 'owner@example.com' },
-  { id: '44444444-4444-4444-8444-444444444444', rule: 'Offer a phone call when a customer reports an alarm.', active: false, source: 'setup', source_thread_id: null, created_by: 'owner@example.com', created_at: '2026-10-25T10:00:00Z', updated_at: '2026-10-26T10:00:00Z', updated_by: 'owner@example.com' },
+  { id: '44444444-4444-4444-8444-444444444444', rule: 'Offer a phone call when a customer reports an alarm.', active: false, scope: 'supplier', source: 'setup', source_thread_id: null, created_by: 'owner@example.com', created_at: '2026-10-25T10:00:00Z', updated_at: '2026-10-26T10:00:00Z', updated_by: 'owner@example.com' },
 ];
 
 test('hidden AI memory page lists, edits, switches off and deletes rules', async ({ page }) => {
@@ -23,6 +23,10 @@ test('hidden AI memory page lists, edits, switches off and deletes rules', async
   await expect(page.getByText('Do not mention historical prices', { exact: false })).toBeVisible();
   await page.screenshot({ path: 'tmp/browser-results/ai-memory-desktop.png', fullPage: true });
 
+  await expect(page.locator('.ai-memory-scope.supplier')).toHaveCount(1);
+  await page.getByRole('tab', { name: /Supplier/ }).click();
+  await expect(page.locator('.ai-memory-list li')).toHaveCount(1);
+  await page.getByRole('tab', { name: /Everywhere/ }).click();
   await page.getByRole('tab', { name: /Off/ }).click();
   await expect(page.locator('.ai-memory-list li')).toHaveCount(1);
   await page.getByRole('tab', { name: /All/ }).click();
@@ -42,7 +46,11 @@ test('hidden AI memory page lists, edits, switches off and deletes rules', async
 
   await page.getByLabel('Teach the AI a new rule').fill('Never promise delivery dates before the supplier confirms.');
   await page.getByRole('button', { name: 'Add rule' }).click();
-  await expect.poll(() => posts.at(-1)).toMatchObject({ action: 'learn', rule: 'Never promise delivery dates before the supplier confirms.' });
+  await expect.poll(() => posts.at(-1)).toMatchObject({ action: 'learn', rule: 'Never promise delivery dates before the supplier confirms.', scope: 'customer' });
+  await page.getByText('Price requests to suppliers', { exact: true }).click();
+  await page.getByLabel('Teach the AI a new rule').fill('Ask suppliers in one line.');
+  await page.getByRole('button', { name: 'Add rule' }).click();
+  await expect.poll(() => posts.at(-1)).toMatchObject({ action: 'learn', rule: 'Ask suppliers in one line.', scope: 'supplier' });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();

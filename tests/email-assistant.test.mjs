@@ -63,7 +63,7 @@ test('/learn saves a standing rule for the signed-in owner without calling the A
   const res=response();
   await emailAssistantHandler(req,res,env,{db,fetch:async()=>{throw new Error('AI workflow must not be called');}});
   assert.equal(res.statusCode,200);
-  assert.deepEqual(inserted,{rule:'Keep replies non-technical.',created_by:env.APP_LOGIN_EMAIL,source:'learn',source_thread_id:threadId,source_draft_id:draftId});
+  assert.deepEqual(inserted,{rule:'Keep replies non-technical.',created_by:env.APP_LOGIN_EMAIL,source:'learn',scope:'customer',source_thread_id:threadId,source_draft_id:draftId});
   assert.equal(res.value.rule.rule,'Keep replies non-technical.');
 });
 test('a rule the owner accepts from the chat is saved as a chat rule', async()=>{
@@ -72,7 +72,7 @@ test('a rule the owner accepts from the chat is saved as a chat rule', async()=>
   const res=response();
   await emailAssistantHandler({method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie:'dcx_session='+createSession(configuration(env))},body:{action:'learn',rule:'Do not mention old prices.',source:'chat'}},res,env,{db});
   assert.equal(res.statusCode,200);
-  assert.equal(inserted.source,'chat');
+  assert.equal(inserted.source,'chat');assert.equal(inserted.scope,'customer');
 });
 test('owner rules can be edited, switched off and deleted', async()=>{
   const calls=[];
