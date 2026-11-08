@@ -19,10 +19,10 @@ import {
   Flag,
   Forward,
   Inbox,
+  Mail,
   MailOpen,
   Paperclip,
   PenLine,
-  RefreshCw,
   Reply,
   Search,
   Send,
@@ -517,6 +517,25 @@ function MicrosoftInbox({
     }, 650);
     return () => window.clearTimeout(timer);
   }, [active?.id, unreadSignature]);
+  // The envelope on each list row: marks the whole conversation read, or its latest email unread (bold again).
+  async function toggleThreadRead(t: { id: string; latest: MicrosoftMessage; messages: MicrosoftMessage[] }) {
+    const unread = t.messages.filter((m) => !m.isRead && !m.isDraft);
+    const targets = unread.length ? unread : [t.latest];
+    const isRead = unread.length > 0;
+    const ids = new Set(targets.map((m) => m.id));
+    for (const id of ids) { if (isRead) manualUnread.current.delete(id); else manualUnread.current.add(id); }
+    const mark = (list: MicrosoftMessage[]) => list.map((m) => (ids.has(m.id) ? { ...m, isRead } : m));
+    setMessages(mark);
+    setThreadMessages((old) => (old[t.id] ? { ...old, [t.id]: mark(old[t.id]) } : old));
+    setError("");
+    try {
+      await Promise.all(targets.map((m) => mailRequest("read", {}, { id: m.id, isRead })));
+      void loadFolders();
+    } catch (cause) {
+      setError((cause as Error).message);
+      refresh();
+    }
+  }
   async function quickAction(type: "read" | "move" | "flag", destinationId?: string) {
     if (!active?.latest || busy) return;
     if (dirty.current) { setError('Save your reply before changing this message.'); return; }
@@ -636,19 +655,6 @@ function MicrosoftInbox({
           <MailOpen size={16} /> {active?.latest.isRead ? 'Mark unread' : 'Mark read'}
         </button>
         {provider === 'microsoft' && <button disabled={!active || busy} onClick={() => quickAction('flag')}><Flag size={16} fill={active?.latest.flag?.flagStatus === 'flagged' ? 'currentColor' : 'none'} /> {active?.latest.flag?.flagStatus === 'flagged' ? 'Unflag' : 'Flag'}</button>}
-        <span className="ribbon-spacer" />
-        <button
-          disabled={busy}
-          onClick={() => {
-            if (dirty.current) {
-              setError("Save your reply before refreshing.");
-              return;
-            }
-            afterAction();
-          }}
-        >
-          <RefreshCw size={15} /> Refresh
-        </button>
       </div>
       <div className="live-mail-status">
         <span>
@@ -851,6 +857,7 @@ function MicrosoftInbox({
                     </footer>
                   </span>
                 </button>
+                {(() => { const isUnread = t.messages.some((m) => !m.isRead && !m.isDraft); return <button className="thread-read" type="button" aria-label={isUnread ? `Mark ${t.latest.subject || 'conversation'} as read` : `Mark ${t.latest.subject || 'conversation'} as unread`} title={isUnread ? 'Mark as read' : 'Mark as unread'} onClick={() => void toggleThreadRead(t)}>{isUnread ? <MailOpen size={16}/> : <Mail size={16}/>}</button>; })()}
                 {provider === 'microsoft' && folder !== 'deleteditems' && <button className="thread-delete" type="button" aria-label={`Delete ${t.latest.subject || 'message'}`} title="Move to Deleted Items" disabled={busy} onClick={async () => {
                   if (draftKeys.has(t.id)) { void deleteConversation(t.id); return; }
                   if (!canLeave()) return;

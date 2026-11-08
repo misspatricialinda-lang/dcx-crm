@@ -440,3 +440,5 @@
 .ai-memory-confirm{display:inline-flex;gap:12px;align-items:center;font-size:12px;font-weight:600;color:#b84d48}
 @media(prefers-reduced-motion:reduce){.ai-memory-switch input,.ai-memory-switch input::after{transition:none}}
 @media(max-width:700px){.ai-memory-list li{grid-template-columns:auto minmax(0,1fr);padding:14px}.ai-memory-actions{grid-column:1/-1;justify-content:flex-start;gap:18px;border-top:1px solid #edf1ef;padding-top:10px}.ai-memory-actions .text-button{min-height:36px}.ai-memory-add textarea,.ai-memory-body textarea,.ai-memory-search input{font-size:16px}.ai-memory-search{width:100%}.ai-memory-add-row .primary{width:100%;min-height:44px}}
+.thread-read{position:absolute;top:42px;right:8px;display:flex;align-items:center;justify-content:center;width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:#5d7f74;cursor:pointer}.thread-read:hover{background:#e8f2ee;color:#1d6b55}.thread-read:focus-visible{outline:3px solid #8bc6ba;outline-offset:1px}
+@media(max-width:700px){.thread-read{width:36px;height:36px;top:44px;right:4px}}
