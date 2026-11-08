@@ -42,6 +42,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
   });
   const [composer, setComposer] = useState(!!ask);
   const [managing, setManaging] = useState(false);
+  const [notice, setNotice] = useState('');
   // The inbox links a supplier email to its request at #suppliers/rfq/<id>.
   const [focus] = useState(() => { const [, mode, id] = location.hash.slice(1).split('/'); return mode === 'rfq' ? id || '' : ''; });
   const reading = useRef(new Set<string>());
@@ -85,6 +86,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
       </div>
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
+    {notice && <p className="sq-notice" role="status"><Sparkles size={14}/> {notice} <button className="text-button" onClick={() => setNotice('')} aria-label="Dismiss"><X size={13}/></button></p>}
     {managing && <SupplierList suppliers={data.suppliers} busy={busy} run={run} onClose={() => setManaging(false)}/>}
     {composer && <NewRequest suppliers={data.suppliers} source={ask} busy={busy === 'create'} onCancel={() => { setComposer(false); setAsk(null); }}
       onCreate={body => run('create', 'rfq-create', body, () => { setComposer(false); setAsk(null); setFilter('all'); })}/>}
@@ -92,7 +94,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
     {loading ? <p className="sq-empty">Loading supplier requests…</p>
       : preview ? <p className="sq-empty">Supplier quotes need the live database.</p>
       : !visible.length ? <div className="sq-empty"><span><Mail size={26}/></span><h3>No requests here</h3><p>Open a customer's email in the Inbox and choose <b>Ask suppliers</b>, or start a new request.</p></div>
-      : visible.map(r => <RfqCard key={r.id} rfq={r} busy={busy} run={run} onOpenInbox={onOpenInbox} focused={r.id === focus}/>)}
+      : visible.map(r => <RfqCard key={r.id} rfq={r} busy={busy} run={run} onOpenInbox={onOpenInbox} focused={r.id === focus} onNotice={setNotice}/>)}
   </section>;
 }
 
@@ -136,7 +138,7 @@ function SupplierList({ suppliers, busy, run, onClose }: { suppliers: Supplier[]
   </div>;
 }
 
-function RfqCard({ rfq, busy, run, onOpenInbox, focused }: { rfq: Rfq; busy: string; run: (key: string, action: string, body: Record<string, unknown>, after?: (result: any) => void) => Promise<void>; onOpenInbox: (threadId: string) => void; focused: boolean }) {
+function RfqCard({ rfq, busy, run, onOpenInbox, focused, onNotice }: { rfq: Rfq; busy: string; run: (key: string, action: string, body: Record<string, unknown>, after?: (result: any) => void) => Promise<void>; onOpenInbox: (threadId: string) => void; focused: boolean; onNotice: (text: string) => void }) {
   const drafts = rfq.recipients.filter(x => x.status === 'draft');
   const total = sentCount(rfq), answered = replied(rfq);
   const node = useRef<HTMLElement>(null);
@@ -158,7 +160,7 @@ function RfqCard({ rfq, busy, run, onOpenInbox, focused }: { rfq: Rfq; busy: str
       </div>
     </header>
     {drafts.length > 0 && <div className="sq-drafts">
-      {drafts.map(d => <DraftEmail key={d.id + d.updated_at} draft={d} busy={busy} run={run} canRemove={rfq.recipients.length > 1}/>)}
+      {drafts.map(d => <DraftEmail key={d.id + d.updated_at} draft={d} busy={busy} run={run} canRemove={rfq.recipients.length > 1} onNotice={onNotice}/>)}
       <div className="sq-send"><button className="primary" disabled={!!busy} onClick={() => void run('send:' + rfq.id, 'rfq-send', { rfq_id: rfq.id })}><Send size={15}/> {busy === 'send:' + rfq.id ? 'Sending…' : `Send to ${drafts.length} supplier${drafts.length === 1 ? '' : 's'}`}</button><small>Each supplier gets their own email from your Outlook mailbox, with your signature.</small></div>
     </div>}
     {total > 0 && <div className="sq-table" role="table">
@@ -168,7 +170,8 @@ function RfqCard({ rfq, busy, run, onOpenInbox, focused }: { rfq: Rfq; busy: str
   </article>;
 }
 
-function DraftEmail({ draft, busy, run, canRemove }: { draft: Recipient; busy: string; run: (key: string, action: string, body: Record<string, unknown>) => Promise<void>; canRemove: boolean }) {
+function DraftEmail({ draft, busy, run, canRemove, onNotice }: { draft: Recipient; busy: string; run: (key: string, action: string, body: Record<string, unknown>, after?: (result: any) => void) => Promise<void>; canRemove: boolean; onNotice: (text: string) => void }) {
+  const [instruction, setInstruction] = useState('');
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody] = useState(draft.body);
   const dirty = subject !== draft.subject || body !== draft.body;
@@ -176,6 +179,13 @@ function DraftEmail({ draft, busy, run, canRemove }: { draft: Recipient; busy: s
     <summary><Mail size={14}/> <b>{draft.supplier_name}</b> <small>{draft.supplier_email}</small>{draft.error && <span className="sq-error">{draft.error}</span>}</summary>
     <label className="sq-label">Subject<input value={subject} onChange={e => setSubject(e.target.value)}/></label>
     <label className="sq-label">Message<textarea rows={10} value={body} onChange={e => setBody(e.target.value)}/></label>
+    <form className="sq-ai-change" onSubmit={e => { e.preventDefault(); const text = instruction.trim(); if (!text || busy || dirty) return;
+      void run('rewrite:' + draft.id, 'rfq-rewrite', { id: draft.id, instruction: text }, result => { setInstruction(''); onNotice(`Updated ${result.changed} email${result.changed === 1 ? '' : 's'} in this request.${result.rule ? ` Saved to AI memory: ${result.rule}` : ''}`); }); }}>
+      <Sparkles size={15} aria-hidden="true"/>
+      <input id={`sq-ai-change-${draft.id}`} aria-label="Tell AI what to change" placeholder="Tell AI what to change, e.g. don't ask for CAD or lead time" value={instruction} onChange={e => setInstruction(e.target.value)} disabled={!!busy}/>
+      <button className="secondary compact" disabled={!!busy || !instruction.trim() || dirty} title={dirty ? 'Save or undo your own edits first' : undefined}>{busy === 'rewrite:' + draft.id ? 'Rewriting…' : 'Change'}</button>
+    </form>
+    <small className="field-help">Changes every unsent email in this request. Corrections that should apply to every request are saved to AI memory.</small>
     <div className="sq-draft-actions">
       <button className="secondary compact" disabled={!dirty || !!busy} onClick={() => void run('save:' + draft.id, 'rfq-save', { id: draft.id, subject, body })}>{busy === 'save:' + draft.id ? 'Saving…' : 'Save changes'}</button>
       {canRemove && <button className="text-button" disabled={!!busy} onClick={() => void run('remove:' + draft.id, 'rfq-remove', { id: draft.id })}><Trash2 size={14}/> Don't send to this supplier</button>}
