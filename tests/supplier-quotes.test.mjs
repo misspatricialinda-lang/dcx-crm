@@ -234,7 +234,7 @@ test('suppliers can be added and removed from Supplier quotes, saved as Customer
   assert.equal((await call({ action: 'rfq-supplier-remove', id: customer })).status, 404);
 });
 
-test('Tell AI what to change rewrites every unsent email in the request and saves a general correction to AI memory', async t => {
+test('Tell AI what to change rewrites every unsent email in the request; only an explicit learn request saves a rule', async t => {
   const pg = await database(); t.after(() => pg.close());
   await pg.exec("create table ai_owner_rules(id uuid primary key default gen_random_uuid(), rule text not null, active boolean not null default true, created_by text not null, source text not null default 'learn', scope text not null default 'customer', created_at timestamptz not null default now())");
   await pg.query("insert into ai_owner_rules(rule,created_by,scope) values('Keep emails short.','owner@dcx.example','supplier'),('Ask customers for their city.','owner@dcx.example','customer')");
@@ -256,6 +256,12 @@ test('Tell AI what to change rewrites every unsent email in the request and save
   const [a, b] = await recipients(pg);
   assert.equal(a.body, `Hi Sam,\n\nCan you please quote me batteries for an Eaton 93PX UPS?\n\nRef: DCX-RFQ-${rfq.number}\n\nThank you,`);
   assert.equal(b.body, `Hi,\n\nCan you please quote me batteries for an Eaton 93PX UPS?\n\nRef: DCX-RFQ-${rfq.number}\n\nThank you,`);
+  // A plain correction changes this request only; nothing goes into AI memory.
+  assert.equal(result.body.rule, '');
+  assert.equal((await pg.query('select count(*)::int n from ai_owner_rules')).rows[0].n, 2);
+  // Only when the owner asks it to learn is the rule saved, tagged Supplier.
+  const learned = await call({ action: 'rfq-rewrite', id: atlas.id, instruction: "don't ask for CAD or lead time, learn this" });
+  assert.equal(learned.body.rule, "In price requests to suppliers, don't ask for currency, lead time or how long the price is valid.");
   const saved = (await pg.query("select rule,source,scope from ai_owner_rules order by created_at desc limit 1")).rows[0];
   assert.deepEqual(saved, { rule: "In price requests to suppliers, don't ask for currency, lead time or how long the price is valid.", source: 'chat', scope: 'supplier' });
   // Sent emails are never rewritten.

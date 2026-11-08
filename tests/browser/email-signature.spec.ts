@@ -27,7 +27,8 @@ test('signature is editable inside the AI reply on a phone and the edited versio
   });
   const posted: Record<string, unknown>[] = [];
   const thread = { id: '22222222-2222-4222-8222-222222222222', subject: 'UPS service', status: 'draft_ready', priority: 'normal', last_message_at: '2026-10-04T10:00:00Z', customer_id: null, provider_thread_key: 'conversation-1', sender: 'customer@example.com', preview: 'Please confirm the next step.' };
-  const draft = { id: '11111111-1111-4111-8111-111111111111', thread_id: thread.id, current_body: 'Thanks. Please share your availability.', original_ai_body: 'Thanks. Please share your availability.', to_addresses: ['customer@example.com'], status: 'editing', updated_at: '2026-10-04T10:00:00Z', deleted_at: null };
+  const body = 'Hi Ali,\n\nWhich quantity of Eaton 93PX batteries do you need? Once you confirm the quantity I will check with my supplier and get back to you shortly.\n\nThank you,';
+  const draft = { id: '11111111-1111-4111-8111-111111111111', thread_id: thread.id, current_body: body, original_ai_body: body, to_addresses: ['customer@example.com'], status: 'editing', updated_at: '2026-10-04T10:00:00Z', deleted_at: null };
   await page.route('**/api/email-assistant**', route => {
     const action = new URL(route.request().url()).searchParams.get('action');
     if (route.request().method() === 'POST') { posted.push(route.request().postDataJSON()); return route.fulfill({ json: { success: true } }); }
@@ -46,6 +47,10 @@ test('signature is editable inside the AI reply on a phone and the edited versio
   await page.locator('.thread-item').first().click();
 
   const canvas = page.locator('.inline-ai-reply .reply-canvas');
+  // On a phone the whole draft is shown: the box grows with its text, nothing is hidden inside it.
+  const editor = page.getByRole('textbox', { name: 'Edit AI reply draft' });
+  await expect(editor).toHaveValue(/get back to you shortly/);
+  await expect.poll(() => editor.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
   const sig = canvas.getByRole('textbox', { name: 'Signature for this email' });
   await expect(sig).toContainText('Field Service Specialist');
   await expect(page.getByText('Signature added when sent')).toHaveCount(0);

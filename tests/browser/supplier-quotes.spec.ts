@@ -55,7 +55,7 @@ test('supplier quotes: write emails, send, and see who replied with their price'
   // Teaching the supplier AI: AI memory opens on Supplier rules, the info tip explains, the change box rewrites.
   await expect(atlasDraft.getByRole('link', { name: 'AI memory' })).toHaveAttribute('href', '#ai-memory/supplier');
   await atlasDraft.getByRole('button', { name: 'How tell ai what to change works' }).click();
-  await expect(page.getByRole('dialog', { name: 'Tell AI what to change' })).toContainText('Supplier rules only affect emails to suppliers');
+  await expect(page.getByRole('dialog', { name: 'Tell AI what to change' })).toContainText('which only affects emails to suppliers');
   await page.screenshot({ path: 'tmp/browser-results/supplier-info-tip.png' });
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Tell AI what to change' })).toHaveCount(0);

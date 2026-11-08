@@ -41,6 +41,7 @@ type Recognition = { lang:string; continuous:boolean; interimResults:boolean; st
 const SpeechRecognition:(new()=>Recognition)|undefined = typeof window==='undefined' ? undefined : (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 const learnCommand = /^\/learn(?![a-z])\s*/i;
 const rulesCommand = /^\/rules\s*$/i;
+const wantsToLearn = (text:string) => /(^|\s)\/learn\b|\b(learn|remember|memori[sz]e)\b/i.test(text);
 const validAddress = (value:string) => /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(value);
 
 // The AI reply for one conversation, edited in place above the email like an Outlook inline reply.
@@ -104,7 +105,11 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     if(shownFor.current!==internetId){shownFor.current=internetId;setLoaded(false);setNotice('');setFiles([]);setQuotations(null);setChat([]);setUndoBody(null);setQuoteFor(null);setCc('');setBcc('');setShowCc(false);setShowBcc(false);void load();}
     else if(!dirty&&!busy)void load(true);
   },[internetId,revision]);
-  useEffect(()=>{const node=editor.current;if(node){node.style.height='auto';node.style.height=`${Math.max(node.scrollHeight,90)}px`;}},[body,draft?.id]);
+  // The draft grows with its text so the page scrolls, not a small box inside it. It is measured again when
+  // its width changes: on a phone the reply is laid out while the reading pane is still hidden.
+  const fitEditor=()=>{const node=editor.current;if(node&&node.offsetWidth){node.style.height='auto';node.style.height=`${Math.max(node.scrollHeight,90)}px`;}};
+  useEffect(fitEditor,[body,draft?.id]);
+  useEffect(()=>{const node=editor.current;if(!node||typeof ResizeObserver==='undefined')return;let width=node.offsetWidth;const watch=new ResizeObserver(()=>{if(node.offsetWidth!==width){width=node.offsetWidth;fitEditor();}});watch.observe(node);return()=>watch.disconnect();},[draft?.id,loaded]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({block:'nearest'});},[chat.length,busy]);
   // The ask box grows with what is written, up to a limit, then scrolls.
   useEffect(()=>{const node=askBox.current;if(node){node.style.height='auto';node.style.height=`${Math.min(node.scrollHeight,220)}px`;}},[instruction]);
@@ -155,8 +160,9 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     const result=await workflow('assist',{instruction:message,chat:earlier});
     if(!result){setChat(old=>[...old,{role:'assistant',text:'That did not work. Your draft is unchanged; try again.'}]);return;}
     const rule=typeof result.rule==='string'&&result.rule.trim().length>=3?result.rule.trim().slice(0,1000):undefined;
-    setChat(old=>[...old,{...(result.kind==='answer'?{role:'assistant' as const,text:result.answer}:{role:'assistant' as const,text:result.note?`Draft updated. ${result.note}`:'Draft updated.',changed:true}),...(rule?{rule,ruleState:'saving' as const}:{})}]);
-    if(rule){const index=chat.length+1;void saveRule(index,rule);}
+    setChat(old=>[...old,{...(result.kind==='answer'?{role:'assistant' as const,text:result.answer}:{role:'assistant' as const,text:result.note?`Draft updated. ${result.note}`:'Draft updated.',changed:true}),...(rule&&wantsToLearn(message)?{rule,ruleState:'saving' as const}:{})}]);
+    // Memory changes only when the owner asks for it ("learn this", "remember…"); other messages edit this draft only.
+    if(rule&&wantsToLearn(message)){const index=chat.length+1;void saveRule(index,rule);}
   }
   // Every correction that should apply to all emails goes straight into AI memory (editable at #ai-memory).
   async function saveRule(index:number,rule:string){
@@ -283,7 +289,7 @@ All future drafts will follow it.`,changed:true}]);}
         <button type="submit" className="secondary compact" disabled={!!busy||!instruction.trim()}>{busy==='assist'||busy==='learn'?'Working…':learnCommand.test(instruction.trim())?'Save':'Ask'}</button></form>
       {instruction.startsWith('/')&&!learnCommand.test(instruction)&&!rulesCommand.test(instruction)&&<div className="inline-ai-commands"><button type="button" className="inline-ai-command" onClick={()=>{setInstruction('/learn ');askBox.current?.focus();}}><strong>/learn</strong> rule — save to the AI's memory for all future emails</button><button type="button" className="inline-ai-command" onClick={()=>void ask('/rules')}><strong>/rules</strong> — show what the AI has learned</button></div>}
       <div className="sq-ai-row"><a className="inline-ai-memory-link" href="#ai-memory/customer" target="_blank" rel="noopener" title="View and edit what the AI has learned"><Brain size={13} aria-hidden="true"/> AI memory</a>
-        <InfoTip title="Ask AI and teach it"><p><b>Ask a question</b> ("what did we quote him last time?") and the AI answers from this person's emails and record without touching the draft.</p><p><b>Tell it what to change</b> ("don't ask for his phone number") and it rewrites the draft.</p><p>If your correction should apply to every email, the AI <b>saves it to AI memory</b> automatically and follows it from then on. Type <b>/learn</b> and a rule to save one yourself, or <b>/rules</b> to list them.</p><p>Open <b>AI memory</b> to edit, switch off or delete rules.</p></InfoTip></div>
+        <InfoTip title="Ask AI and teach it"><p><b>Ask a question</b> ("what did we quote him last time?") and the AI answers from this person's emails and record without touching the draft.</p><p><b>Tell it what to change</b> ("don't ask for his phone number") and it rewrites the draft.</p><p>Changes only apply to this draft. To make the AI <b>remember</b> something for every email, start with <b>/learn</b> (e.g. "/learn don't ask for phone numbers"), or add "learn this" to your correction. <b>/rules</b> lists what it has learned.</p><p>Open <b>AI memory</b> to edit, switch off or delete rules.</p></InfoTip></div>
     </div>
     <div className="inline-ai-files">
       <label className="text-button"><Paperclip size={14}/> Attach files<input type="file" multiple hidden onChange={event=>{if(event.target.files)addFiles(Array.from(event.target.files));event.target.value='';}} disabled={!!busy}/></label>

@@ -82,6 +82,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
       <div className="sq-hero-icon"><PackageSearch size={26}/></div>
       <div><span className="sq-eyebrow">PRICE REQUESTS TO SUPPLIERS</span><h1>Supplier quotes <InfoTip title="Supplier quotes"><ul><li>From a customer's email in the Inbox, choose <b>Ask suppliers</b>, or start a <b>New request</b> here.</li><li>The AI writes one short email per supplier. Check them, then click <b>Send</b>: each supplier gets their own email from your Outlook.</li><li>Replies are matched automatically and the AI fills in price and delivery time. Use <b>Remind</b> if a supplier is slow.</li><li>The customer's name and details are never included.</li></ul></InfoTip></h1><p>Ask several suppliers at once and see who has answered.</p></div>
       <div className="sq-hero-actions">
+        <a className="secondary sq-manage" href="#ai-memory/supplier" target="_blank" rel="noopener" title="Rules the AI follows when writing to suppliers"><Brain size={16}/> AI memory</a>
         <button className="secondary sq-manage" onClick={() => setManaging(!managing)} aria-expanded={managing}><Users size={16}/> Suppliers <b>{data.suppliers.length}</b></button>
         <button className="primary" onClick={() => { setAsk(null); setComposer(true); }}><Plus size={16}/> New request</button>
       </div>
@@ -183,11 +184,11 @@ function DraftEmail({ draft, busy, run, canRemove, onNotice }: { draft: Recipien
     <form className="sq-ai-change" onSubmit={e => { e.preventDefault(); const text = instruction.trim(); if (!text || busy || dirty) return;
       void run('rewrite:' + draft.id, 'rfq-rewrite', { id: draft.id, instruction: text }, result => { setInstruction(''); onNotice(`Updated ${result.changed} email${result.changed === 1 ? '' : 's'} in this request.${result.rule ? ` Saved to AI memory: ${result.rule}` : ''}`); }); }}>
       <Sparkles size={15} aria-hidden="true"/>
-      <input id={`sq-ai-change-${draft.id}`} aria-label="Tell AI what to change" placeholder="Tell AI what to change, e.g. don't ask for CAD or lead time" value={instruction} onChange={e => setInstruction(e.target.value)} disabled={!!busy}/>
+      <input id={`sq-ai-change-${draft.id}`} aria-label="Tell AI what to change" placeholder="Tell AI what to change, or /learn to remember it" value={instruction} onChange={e => setInstruction(e.target.value)} disabled={!!busy}/>
       <button className="secondary compact" disabled={!!busy || !instruction.trim() || dirty} title={dirty ? 'Save or undo your own edits first' : undefined}>{busy === 'rewrite:' + draft.id ? 'Rewriting…' : 'Change'}</button>
     </form>
     <div className="sq-ai-row"><a className="inline-ai-memory-link" href="#ai-memory/supplier" target="_blank" rel="noopener" title="View and edit the supplier rules the AI has learned"><Brain size={13} aria-hidden="true"/> AI memory</a>
-      <InfoTip title="Tell AI what to change"><p>Type what you want different, e.g. "don't ask for lead time" or "make it shorter". The AI rewrites <b>every unsent email in this request</b> the same way.</p><p>If your correction should apply to all future requests, it is <b>saved to AI memory</b> as a <b>Supplier</b> rule. Supplier rules only affect emails to suppliers, never replies to customers.</p></InfoTip></div>
+      <InfoTip title="Tell AI what to change"><p>Type what you want different, e.g. "don't ask for lead time" or "make it shorter". The AI rewrites <b>every unsent email in this request</b> the same way.</p><p>This only changes this request. To make the AI <b>remember</b> it for every future request, start with <b>/learn</b> or add "learn this", e.g. "/learn don't ask for lead time". It is saved as a <b>Supplier</b> rule, which only affects emails to suppliers.</p></InfoTip></div>
     <div className="sq-draft-actions">
       <button className="secondary compact" disabled={!dirty || !!busy} onClick={() => void run('save:' + draft.id, 'rfq-save', { id: draft.id, subject, body })}>{busy === 'save:' + draft.id ? 'Saving…' : 'Save changes'}</button>
       {canRemove && <button className="text-button" disabled={!!busy} onClick={() => void run('remove:' + draft.id, 'rfq-remove', { id: draft.id })}><Trash2 size={14}/> Don't send to this supplier</button>}
