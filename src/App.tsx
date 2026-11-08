@@ -22,6 +22,7 @@ import { QuotationLanding } from "./components/operations/QuotationLanding";
 import { NotificationsPage } from "./components/operations/NotificationsPage";
 import { FeatureRequestsPage } from "./components/operations/FeatureRequestsPage";
 import { SupplierQuotes } from "./components/operations/SupplierQuotes";
+import { AiMemoryPage } from "./components/operations/AiMemoryPage";
 import { toClient, crmRequest } from "./lib/crm-client";
 import { withPreviewExample } from "./lib/preview-example";
 import { LoginGate } from "./components/Login";
@@ -51,6 +52,8 @@ import {
 import { lineFromRate } from "./lib/costing";
 import type { Workspace, SavedQuote, Client, PriceBook, QuoteDraft } from "./types/operations";
 
+// Pages reachable by address only, not listed in the menu.
+const hiddenPages = ["ai-memory"];
 const nav = [
   { id: "dashboard", label: "Overview", icon: LayoutDashboard },
   { id: "inbox", label: "Inbox", icon: Inbox },
@@ -171,7 +174,7 @@ function Dashboard({
     update(d=>{const books=d.books.filter(b=>b.id!==id);return {...d,books,draft:d.draft?.bookId===id?{...d.draft,bookId:books[0].id,bookVersion:books[0].version,lines:books[0].items.map(r=>lineFromRate(r,0)),taxPercent:books[0].taxPercent??0}:d.draft};},'Pricing agreement deleted.');
   }
   const [tab, setTab] = useState(() =>
-    nav.map((n) => n.id).includes(location.hash.slice(1).split("/")[0])
+    [...nav.map((n) => n.id), ...hiddenPages].includes(location.hash.slice(1).split("/")[0])
       ? location.hash.slice(1).split("/")[0]
       : "dashboard",
   );
@@ -199,7 +202,7 @@ function Dashboard({
     const change = () => {
       // A page may keep its own place after a slash, e.g. #quotations/<customer id>.
       const id = location.hash.slice(1).split("/")[0];
-      setTab(nav.map((n) => n.id).includes(id) ? id : "dashboard");
+      setTab([...nav.map((n) => n.id), ...hiddenPages].includes(id) ? id : "dashboard");
     };
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
@@ -489,6 +492,7 @@ function Dashboard({
                 )}
               />
             )}
+            {tab === "ai-memory" && <AiMemoryPage preview={preview} onOpenInbox={(threadId) => navigate('inbox', threadId)} />}
             {tab === "suppliers" && <SupplierQuotes preview={preview} onOpenInbox={(threadId) => navigate('inbox', threadId)} />}
             {tab === "quotations" && <QuotationLanding preview={preview} data={data} onLoaded={setCloudCustomers} />}
             {tab === "calculator" && (

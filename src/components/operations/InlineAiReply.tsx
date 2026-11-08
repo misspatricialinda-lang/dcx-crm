@@ -11,7 +11,8 @@ import { useUndoHistory } from '../../lib/undo-history';
 
 type Draft = { id:string; thread_id:string; current_body:string; original_ai_body:string|null; to_addresses:string[]; status:string; updated_at:string };
 export type ReplyOutcome = 'sent' | 'discarded' | 'changed';
-type ChatTurn = { role:'owner'|'assistant'; text:string; changed?:boolean };
+// rule: a standing rule the AI proposes from the owner's correction; saved only when the owner confirms.
+type ChatTurn = { role:'owner'|'assistant'; text:string; changed?:boolean; rule?:string; ruleState?:'offer'|'saving'|'saved'|'dismissed' };
 
 async function assistant<T>(query:string, body?:unknown):Promise<T> {
   const response = await fetch(`/api/email-assistant?${query}`, { credentials:'same-origin', cache:'no-store', ...(body ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) } : {}) });
@@ -38,6 +39,7 @@ type Recognition = { lang:string; continuous:boolean; interimResults:boolean; st
   onresult:((event:{resultIndex:number; results:ArrayLike<ArrayLike<{transcript:string}>&{isFinal:boolean}>})=>void)|null; onend:(()=>void)|null; onerror:((event:{error:string})=>void)|null };
 const SpeechRecognition:(new()=>Recognition)|undefined = typeof window==='undefined' ? undefined : (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 const learnCommand = /^\/learn(?![a-z])\s*/i;
+const rulesCommand = /^\/rules\s*$/i;
 const validAddress = (value:string) => /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(value);
 
 // The AI reply for one conversation, edited in place above the email like an Outlook inline reply.
@@ -145,12 +147,27 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
     recognition.current?.stop();
     const learn=learnCommand.exec(message);
     if(learn){await remember(message,message.slice(learn[0].length).trim());return;}
+    if(rulesCommand.test(message)){await listRules(message);return;}
     if(dirty&&!await save())return;
     const earlier=chat.slice(-8).map(({role,text})=>({role,text}));
     setChat(old=>[...old,{role:'owner',text:message}]);setInstruction('');
     const result=await workflow('assist',{instruction:message,chat:earlier});
     if(!result){setChat(old=>[...old,{role:'assistant',text:'That did not work. Your draft is unchanged; try again.'}]);return;}
-    setChat(old=>[...old,result.kind==='answer'?{role:'assistant',text:result.answer}:{role:'assistant',text:result.note?`Draft updated. ${result.note}`:'Draft updated.',changed:true}]);
+    const rule=typeof result.rule==='string'&&result.rule.trim().length>=3?result.rule.trim().slice(0,1000):undefined;
+    setChat(old=>[...old,{...(result.kind==='answer'?{role:'assistant' as const,text:result.answer}:{role:'assistant' as const,text:result.note?`Draft updated. ${result.note}`:'Draft updated.',changed:true}),...(rule?{rule,ruleState:'offer' as const}:{})}]);
+  }
+  // Saves the rule the AI proposed (as edited by the owner) so every future draft follows it.
+  async function keepRule(index:number){
+    const turn=chat[index];if(!turn?.rule||busy)return;
+    setChat(old=>old.map((t,i)=>i===index?{...t,ruleState:'saving'}:t));
+    try{await assistant('',{action:'learn',rule:turn.rule,thread_id:draft?.thread_id,draft_id:draft?.id,source:'chat'});setChat(old=>old.map((t,i)=>i===index?{...t,ruleState:'saved'}:t));}
+    catch(cause){setChat(old=>old.map((t,i)=>i===index?{...t,ruleState:'offer'}:t));setError(`Rule not saved: ${(cause as Error).message}`);}
+  }
+  async function listRules(message:string){
+    setInstruction('');setChat(old=>[...old,{role:'owner',text:message}]);
+    try{const {rules}=await assistant<{rules:{rule:string;active:boolean}[]}>('action=rules');const active=rules.filter(r=>r.active);
+      setChat(old=>[...old,{role:'assistant',text:active.length?`Rules every draft follows (newest first):\n${active.map((r,i)=>`${i+1}. ${r.rule}`).join('\n')}\n\nEdit or turn them off on the AI memory page (#ai-memory).`:'No rules saved yet. Type /learn and a rule, or correct a draft and choose "Remember".'}]);}
+    catch(cause){setChat(old=>[...old,{role:'assistant',text:`Could not load rules: ${(cause as Error).message}`}]);}
   }
   // "/learn <rule>" saves a standing instruction that every future draft follows; it does not change this draft.
   async function remember(message:string,rule:string){
@@ -256,13 +273,18 @@ All future drafts will follow it.`,changed:true}]);}
     </div>
     <div className="inline-ai-tweaks"><span>Change it:</span>{quickChanges.map(label=><button type="button" key={label} className="chip" disabled={!!busy} onClick={()=>void rewrite(label)}>{label}</button>)}</div>
     <div className="inline-ai-chat" aria-label="Ask AI about this customer">
-      {(!!chat.length||busy==='assist')&&<div className="inline-ai-chat-log" role="log">{chat.map((turn,index)=><p key={index} className={`chat-turn ${turn.role}${turn.changed?' changed':''}`}>{turn.text}</p>)}{busy==='assist'&&<p className="chat-turn assistant pending">Checking this customer's history…</p>}<div ref={chatEnd}/></div>}
+      {(!!chat.length||busy==='assist')&&<div className="inline-ai-chat-log" role="log">{chat.map((turn,index)=><div key={index} className={`chat-turn ${turn.role}${turn.changed?' changed':''}`}><p>{turn.text}</p>
+        {turn.rule&&turn.ruleState!=='dismissed'&&<div className="chat-rule">{turn.ruleState==='saved'?<span>Saved. Every future draft will follow: <b>{turn.rule}</b></span>:<>
+          <span>Remember this for all future emails?</span>
+          <textarea rows={2} aria-label="Rule to remember" value={turn.rule} onChange={event=>{const value=event.target.value;setChat(old=>old.map((t,i)=>i===index?{...t,rule:value}:t));}} disabled={turn.ruleState==='saving'}/>
+          <div><button type="button" className="secondary compact" disabled={turn.ruleState==='saving'||turn.rule.trim().length<3} onClick={()=>void keepRule(index)}>{turn.ruleState==='saving'?'Saving…':'Remember'}</button><button type="button" className="text-button" onClick={()=>setChat(old=>old.map((t,i)=>i===index?{...t,ruleState:'dismissed'}:t))}>Only this email</button></div></>}</div>}
+      </div>)}{busy==='assist'&&<p className="chat-turn assistant pending">Checking this customer's history…</p>}<div ref={chatEnd}/></div>}
       <form onSubmit={event=>{event.preventDefault();void ask(instruction);}}><MessageSquare size={15} aria-hidden="true"/>
         <textarea ref={askBox} rows={1} aria-label="Ask AI or tell it what to change" placeholder={listening?'Listening… speak your instruction':'Ask about this customer, tell AI what to change, or type /learn to teach it a rule'} value={instruction} onChange={event=>setInstruction(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void ask(instruction);}}} disabled={!!busy}/>
         {SpeechRecognition&&<button type="button" className={`icon-button inline-ai-mic${listening?' listening':''}`} aria-label={listening?'Stop voice input':'Speak instead of typing'} aria-pressed={listening} title={listening?'Stop listening':'Speak instead of typing'} disabled={!!busy} onClick={toggleVoice}>{listening?<MicOff size={15}/>:<Mic size={15}/>}</button>}
         <button type="submit" className="secondary compact" disabled={!!busy||!instruction.trim()}>{busy==='assist'||busy==='learn'?'Working…':learnCommand.test(instruction.trim())?'Save':'Ask'}</button></form>
-      {instruction.startsWith('/')&&!learnCommand.test(instruction)&&<button type="button" className="inline-ai-command" onClick={()=>{setInstruction('/learn ');askBox.current?.focus();}}><strong>/learn</strong> rule — save to the AI's memory for all future emails</button>}
-      <small>Knows this conversation, this person's earlier emails with DCX and their customer record. Type <strong>/learn</strong> and a rule to make the AI remember it for every email. Shift+Enter adds a new line.</small>
+      {instruction.startsWith('/')&&!learnCommand.test(instruction)&&!rulesCommand.test(instruction)&&<div className="inline-ai-commands"><button type="button" className="inline-ai-command" onClick={()=>{setInstruction('/learn ');askBox.current?.focus();}}><strong>/learn</strong> rule — save to the AI's memory for all future emails</button><button type="button" className="inline-ai-command" onClick={()=>void ask('/rules')}><strong>/rules</strong> — show what the AI has learned</button></div>}
+      <small>Knows this conversation, this person's earlier emails with DCX and their customer record. When you correct something that should apply to every email, the AI offers to remember it; or type <strong>/learn</strong> and a rule. Shift+Enter adds a new line.</small>
     </div>
     <div className="inline-ai-files">
       <label className="text-button"><Paperclip size={14}/> Attach files<input type="file" multiple hidden onChange={event=>{if(event.target.files)addFiles(Array.from(event.target.files));event.target.value='';}} disabled={!!busy}/></label>

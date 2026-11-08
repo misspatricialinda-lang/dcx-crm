@@ -42,6 +42,10 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
       const banner=row.banner_base64?`data:${row.banner_content_type};base64,${row.banner_base64}`:'';
       return reply(res,200,{signature:{fields:row.fields,enabled:row.enabled,has_banner:!!banner,preview_html:signatureHtml(row.fields,{banner:!!banner,bannerSrc:banner}),body_html:signatureRows(row.fields),banner_src:banner,updated_at:row.updated_at,updated_by:row.updated_by}});
     }
+    if (req.method === 'GET' && url.searchParams.get('action') === 'rules') {
+      const rules = await checked(db.from('ai_owner_rules').select('id,rule,active,source,source_thread_id,created_by,created_at,updated_at,updated_by').order('created_at', { ascending: false }).limit(200));
+      return reply(res, 200, { rules });
+    }
     if(req.method==='GET' && url.searchParams.get('action')==='location') {
       const id=url.searchParams.get('id');if(!uuid(id))return reply(res,400,{error:'Invalid conversation.'});
       const thread=await checked(db.from('email_threads').select('id,provider_thread_key').eq('id',id).maybeSingle());
@@ -111,8 +115,25 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     if (input?.action === 'learn') {
       const rule = typeof input.rule === 'string' ? input.rule.trim() : '';
       if (rule.length < 3 || rule.length > 1000) return reply(res, 400, { error: 'Write the rule after /learn (3 to 1000 characters).' });
-      const record = await checked(db.from('ai_owner_rules').insert({ rule, created_by: session.email, source_thread_id: uuid(input.thread_id) ? input.thread_id : null, source_draft_id: uuid(input.draft_id) ? input.draft_id : null }).select('id,rule,created_at').single());
+      const record = await checked(db.from('ai_owner_rules').insert({ rule, created_by: session.email, source: input.source === 'chat' ? 'chat' : 'learn', source_thread_id: uuid(input.thread_id) ? input.thread_id : null, source_draft_id: uuid(input.draft_id) ? input.draft_id : null }).select('id,rule,created_at').single());
       return reply(res, 200, { success: true, rule: record });
+    }
+    if (input?.action === 'rule-update') {
+      if (!uuid(input.id)) return reply(res, 400, { error: 'Choose a rule.' });
+      const change = { updated_at: new Date().toISOString(), updated_by: session.email };
+      if (input.rule !== undefined) {
+        const rule = typeof input.rule === 'string' ? input.rule.trim() : '';
+        if (rule.length < 3 || rule.length > 1000) return reply(res, 400, { error: 'A rule needs 3 to 1000 characters.' });
+        change.rule = rule;
+      }
+      if (input.active !== undefined) { if (typeof input.active !== 'boolean') return reply(res, 400, { error: 'Invalid rule state.' }); change.active = input.active; }
+      const rows = await checked(db.from('ai_owner_rules').update(change).eq('id', input.id).select('id'));
+      return rows.length ? reply(res, 200, { success: true }) : reply(res, 404, { error: 'Rule not found.' });
+    }
+    if (input?.action === 'rule-delete') {
+      if (!uuid(input.id)) return reply(res, 400, { error: 'Choose a rule.' });
+      await checked(db.from('ai_owner_rules').delete().eq('id', input.id));
+      return reply(res, 200, { success: true });
     }
     if (['delete','restore'].includes(input?.action)) {
       if(!uuid(input.draft_id)||!Number.isFinite(Date.parse(input.updated_at))) return reply(res,400,{error:'Reload the draft before changing it.'});

@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
 
-const output = resolve('.tools/email-archive');
+const output = resolve(process.argv.find(a => a.startsWith('--output='))?.slice(9) || '.tools/email-archive');
 const manifest = JSON.parse(readFileSync(resolve(output, 'direct-source.json'), 'utf8'));
 const pst = new PSTFile(manifest.path);
 const cache = resolve(output, 'messages.jsonl');

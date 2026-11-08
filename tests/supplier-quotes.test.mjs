@@ -204,3 +204,30 @@ test('replying to a supplier from Supplier quotes stays in their conversation an
   const chain = await supplierThread(db, row.id);
   assert.equal(chain.messages.at(-1).direction, 'outgoing'); assert.equal(chain.messages.at(-1).text, 'Please confirm in CAD.');
 });
+
+test('suppliers can be added and removed from Supplier quotes, saved as Customers of type Supplier', async t => {
+  const pg = await database(); t.after(() => pg.close());
+  const db = trackingDb(pg);
+  const call = input => supplierQuotesRequest({ db, env: {}, session: { email: 'owner@dcx.example' }, method: 'POST', url: new URL('http://x/'), input });
+  let result = await call({ action: 'rfq-supplier-add', name: 'Atlas Batteries', contact: 'Sam', email: ' Sales_Team@Atlas.example ' });
+  assert.equal(result.status, 200);
+  const id = result.body.supplier.id;
+  assert.deepEqual((await pg.query('select name,contact,email,relationship_type from crm_customers where id=$1', [id])).rows[0], { name: 'Atlas Batteries', contact: 'Sam', email: 'sales_team@atlas.example', relationship_type: 'supplier' });
+  // "_" is a literal character, not a wildcard, when checking for duplicates.
+  assert.equal((await call({ action: 'rfq-supplier-add', email: 'salesXteam@atlas.example' })).status, 200);
+  assert.equal((await call({ action: 'rfq-supplier-add', email: 'SALES_TEAM@atlas.example' })).status, 409);
+  await pg.query("insert into crm_customers(name,email,relationship_type) values('Acme Hospital','buyer@acme.example','customer')");
+  result = await call({ action: 'rfq-supplier-add', email: 'buyer@acme.example' });
+  assert.equal(result.status, 409); assert.match(result.body.error, /Acme Hospital/);
+  assert.equal((await call({ action: 'rfq-supplier-add', email: 'not-an-email' })).status, 400);
+
+  assert.equal((await call({ action: 'rfq-supplier-remove', id })).status, 200);
+  assert.ok((await pg.query('select deleted_at from crm_customers where id=$1', [id])).rows[0].deleted_at);
+  // Adding the address again restores the same record instead of creating a duplicate.
+  result = await call({ action: 'rfq-supplier-add', email: 'sales_team@atlas.example' });
+  assert.equal(result.body.supplier.id, id);
+  assert.equal((await pg.query("select count(*)::int n from crm_customers where email='sales_team@atlas.example'")).rows[0].n, 1);
+  // Customers are never removed through Supplier quotes.
+  const customer = (await pg.query("select id from crm_customers where email='buyer@acme.example'")).rows[0].id;
+  assert.equal((await call({ action: 'rfq-supplier-remove', id: customer })).status, 404);
+});

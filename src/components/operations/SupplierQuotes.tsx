@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BellRing, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { BellRing, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, Send, Sparkles, Trash2, Users, X } from 'lucide-react';
 
 type Supplier = { id: string; name: string; contact: string | null; email: string };
 type Recipient = {
@@ -41,6 +41,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
     return mode === 'ask' && id ? { internetId: decodeURIComponent(id) } : null;
   });
   const [composer, setComposer] = useState(!!ask);
+  const [managing, setManaging] = useState(false);
   // The inbox links a supplier email to its request at #suppliers/rfq/<id>.
   const [focus] = useState(() => { const [, mode, id] = location.hash.slice(1).split('/'); return mode === 'rfq' ? id || '' : ''; });
   const reading = useRef(new Set<string>());
@@ -79,10 +80,12 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
       <div className="sq-hero-icon"><PackageSearch size={26}/></div>
       <div><span className="sq-eyebrow">PRICE REQUESTS TO SUPPLIERS</span><h1>Supplier quotes</h1><p>Ask several suppliers at once and see who has answered.</p></div>
       <div className="sq-hero-actions">
+        <button className="secondary sq-manage" onClick={() => setManaging(!managing)} aria-expanded={managing}><Users size={16}/> Suppliers <b>{data.suppliers.length}</b></button>
         <button className="primary" onClick={() => { setAsk(null); setComposer(true); }}><Plus size={16}/> New request</button>
       </div>
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
+    {managing && <SupplierList suppliers={data.suppliers} busy={busy} run={run} onClose={() => setManaging(false)}/>}
     {composer && <NewRequest suppliers={data.suppliers} source={ask} busy={busy === 'create'} onCancel={() => { setComposer(false); setAsk(null); }}
       onCreate={body => run('create', 'rfq-create', body, () => { setComposer(false); setAsk(null); setFilter('all'); })}/>}
     <div className="sq-filters" role="tablist">{filters.map(([id, label]) => <button key={id} role="tab" aria-selected={filter === id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}<b>{data.rfqs.filter(r => matches(r, id)).length}</b></button>)}</div>
@@ -105,10 +108,31 @@ function NewRequest({ suppliers, source, busy, onCancel, onCreate }: { suppliers
     <label className="sq-label">{source ? 'Anything to add? (optional)' : 'What do you need priced?'}
       <textarea rows={3} value={request} onChange={e => setRequest(e.target.value)} placeholder={source ? 'e.g. Ask for genuine APC batteries only' : 'e.g. 4 × 12V 9Ah batteries for an APC SRT3000'}/></label>
     <div className="sq-label">Send to
-      {!suppliers.length ? <p className="field-help">No suppliers yet. Add a customer with the type <b>Supplier</b> and an email address on the Customers page.</p>
+      {!suppliers.length ? <p className="field-help">No suppliers yet. Add them with the <b>Suppliers</b> button above.</p>
         : <div className="sq-suppliers">{suppliers.map(s => <label key={s.id} className={chosen.includes(s.id) ? 'on' : ''}><input type="checkbox" checked={chosen.includes(s.id)} onChange={() => toggle(s.id)}/><span><b>{s.name}</b><small>{s.email}</small></span></label>)}</div>}
     </div>
     <div className="sq-new-actions"><button className="primary" disabled={!ready || busy} onClick={() => onCreate({ supplier_ids: chosen, request, ...(source ? { internet_message_id: source.internetId } : {}) })}><Sparkles size={15}/> {busy ? 'Writing emails…' : `Write ${chosen.length} email${chosen.length === 1 ? '' : 's'}`}</button><small>Nothing is sent until you review and click Send.</small></div>
+  </div>;
+}
+
+// Add or remove the suppliers price requests go to. Saved in the database, so every device sees the same list.
+function SupplierList({ suppliers, busy, run, onClose }: { suppliers: Supplier[]; busy: string; run: (key: string, action: string, body: Record<string, unknown>, after?: (result: any) => void) => Promise<void>; onClose: () => void }) {
+  const [form, setForm] = useState({ name: '', contact: '', email: '' });
+  const valid = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(form.email.trim());
+  return <div className="sq-new panel sq-manager">
+    <div className="sq-new-head"><h2>Suppliers</h2><button className="text-button" onClick={onClose} aria-label="Close"><X size={16}/></button></div>
+    <p className="field-help">Price requests can go to everyone on this list. Changes are saved for all devices.</p>
+    <form className="sq-add" onSubmit={event => { event.preventDefault(); if (valid) void run('supplier-add', 'rfq-supplier-add', form, () => setForm({ name: '', contact: '', email: '' })); }}>
+      <label className="sq-label">Email<input type="email" inputMode="email" autoComplete="off" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="sales@supplier.com"/></label>
+      <label className="sq-label">Company<input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Battery Depot"/></label>
+      <label className="sq-label">Contact name<input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} placeholder="Optional"/></label>
+      <button className="primary" disabled={!valid || !!busy}><Plus size={15}/> {busy === 'supplier-add' ? 'Adding…' : 'Add supplier'}</button>
+    </form>
+    {!suppliers.length ? <p className="field-help">No suppliers yet.</p>
+      : <ul className="sq-supplier-list">{suppliers.map(s => <li key={s.id}>
+        <span><b>{s.name}</b><small>{s.contact ? `${s.contact} · ` : ''}{s.email}</small></span>
+        <button className="text-button" disabled={!!busy} aria-label={`Remove ${s.name}`} onClick={() => { if (confirm(`Remove ${s.name} (${s.email}) from suppliers? Past requests keep their emails. You can restore it from the Customers trash.`)) void run('supplier-remove:' + s.id, 'rfq-supplier-remove', { id: s.id }); }}><Trash2 size={14}/> {busy === 'supplier-remove:' + s.id ? 'Removing…' : 'Remove'}</button>
+      </li>)}</ul>}
   </div>;
 }
 

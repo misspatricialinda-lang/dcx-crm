@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
 
-const directory = resolve('.tools/email-archive');
+const directory = resolve(process.argv.find(a => a.startsWith('--output='))?.slice(9) || '.tools/email-archive');
 const cache = resolve(directory, 'messages.jsonl');
 const pending = resolve(directory, 'messages.addresses.jsonl');
 const manifest = JSON.parse(readFileSync(resolve(directory, 'direct-source.json'), 'utf8'));

@@ -180,6 +180,31 @@ export async function supplierQuotesRequest({ db, env, session, method, url, inp
     return { status: 200, body: { success: true, rfq } };
   }
 
+  // The supplier list on Supplier quotes. Suppliers are Customers records of type Supplier, so a removed
+  // supplier goes to the Customers trash and can be restored there; past requests keep their copies.
+  if (action === 'rfq-supplier-add') {
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    const contact = typeof input.contact === 'string' ? input.contact.trim().slice(0, 200) : '';
+    const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+    if (!/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(email) || email.length > 320) return { status: 400, body: { error: 'Enter a valid email address.' } };
+    if (name.length > 200) return { status: 400, body: { error: 'The supplier name is too long.' } };
+    const existing = await checked(db.from('crm_customers').select('id,name,relationship_type,deleted_at').ilike('email', email.replace(/[\\%_]/g, '\\$&')).order('deleted_at', { ascending: false, nullsFirst: true }).limit(5));
+    const active = existing.find(row => !row.deleted_at);
+    if (active?.relationship_type === 'supplier') return { status: 409, body: { error: `${active.name} is already a supplier.` } };
+    if (active) return { status: 409, body: { error: `${email} belongs to ${active.name}, saved as a ${String(active.relationship_type || 'customer').replace('_', ' ')}. Change its type to Supplier on the Customers page.` } };
+    const removed = existing.find(row => row.deleted_at && row.relationship_type === 'supplier');
+    const fields = { name: name || removed?.name || email.split('@')[1].split('.')[0], ...(contact ? { contact } : {}), email, relationship_type: 'supplier', updated_at: new Date().toISOString() };
+    const supplier = removed
+      ? await checked(db.from('crm_customers').update({ ...fields, deleted_at: null }).eq('id', removed.id).select('id,name,contact,email').single())
+      : await checked(db.from('crm_customers').insert(fields).select('id,name,contact,email').single());
+    return { status: 200, body: { success: true, supplier } };
+  }
+  if (action === 'rfq-supplier-remove') {
+    if (!uuid(input.id)) return { status: 400, body: { error: 'Choose a supplier.' } };
+    const rows = await checked(db.from('crm_customers').update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', input.id).eq('relationship_type', 'supplier').is('deleted_at', null).select('id'));
+    return rows.length ? { status: 200, body: { success: true } } : { status: 404, body: { error: 'Supplier not found.' } };
+  }
+
   if (action === 'rfq-save') {
     if (!uuid(input.id) || typeof input.subject !== 'string' || !input.subject.trim() || input.subject.length > 300 || typeof input.body !== 'string' || !input.body.trim() || input.body.length > 20000) return { status: 400, body: { error: 'Subject and message are required.' } };
     const row = await checked(db.from('supplier_rfq_recipients').update({ subject: input.subject.trim(), body: input.body, updated_at: new Date().toISOString() }).eq('id', input.id).eq('status', 'draft').select('id').maybeSingle());

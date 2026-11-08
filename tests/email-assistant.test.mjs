@@ -63,8 +63,30 @@ test('/learn saves a standing rule for the signed-in owner without calling the A
   const res=response();
   await emailAssistantHandler(req,res,env,{db,fetch:async()=>{throw new Error('AI workflow must not be called');}});
   assert.equal(res.statusCode,200);
-  assert.deepEqual(inserted,{rule:'Keep replies non-technical.',created_by:env.APP_LOGIN_EMAIL,source_thread_id:threadId,source_draft_id:draftId});
+  assert.deepEqual(inserted,{rule:'Keep replies non-technical.',created_by:env.APP_LOGIN_EMAIL,source:'learn',source_thread_id:threadId,source_draft_id:draftId});
   assert.equal(res.value.rule.rule,'Keep replies non-technical.');
+});
+test('a rule the owner accepts from the chat is saved as a chat rule', async()=>{
+  let inserted;
+  const db={from(){return {insert(row){inserted=row;return this;},select(){return this;},single:async()=>({data:{id:'r2',rule:inserted.rule},error:null})};}};
+  const res=response();
+  await emailAssistantHandler({method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie:'dcx_session='+createSession(configuration(env))},body:{action:'learn',rule:'Do not mention old prices.',source:'chat'}},res,env,{db});
+  assert.equal(res.statusCode,200);
+  assert.equal(inserted.source,'chat');
+});
+test('owner rules can be edited, switched off and deleted', async()=>{
+  const calls=[];
+  const chain=(table)=>{const q={update(v){calls.push(['update',table,v]);return q;},delete(){calls.push(['delete',table]);return q;},eq(k,v){calls.push(['eq',k,v]);return q;},select:async()=>({data:[{id:'r1'}],error:null}),then(ok){return Promise.resolve({data:null,error:null}).then(ok);}};return q;};
+  const db={from:chain};
+  const cookie='dcx_session='+createSession(configuration(env));
+  const post=async body=>{const res=response();await emailAssistantHandler({method:'POST',url:'/',headers:{host:'localhost:3000',origin:'http://localhost:3000',cookie},body},res,env,{db});return res;};
+  const id='11111111-1111-4111-8111-111111111111';
+  assert.equal((await post({action:'rule-update',id,rule:'  Be brief.  ',active:false})).statusCode,200);
+  const update=calls.find(c=>c[0]==='update');
+  assert.equal(update[1],'ai_owner_rules');assert.equal(update[2].rule,'Be brief.');assert.equal(update[2].active,false);assert.equal(update[2].updated_by,env.APP_LOGIN_EMAIL);
+  assert.equal((await post({action:'rule-update',id,rule:'x'})).statusCode,400);
+  assert.equal((await post({action:'rule-delete',id})).statusCode,200);
+  assert.ok(calls.some(c=>c[0]==='delete'&&c[1]==='ai_owner_rules'));
 });
 test('/learn rejects an empty rule and requires a session', async()=>{
   const db={from(){throw new Error('nothing should be saved');}};

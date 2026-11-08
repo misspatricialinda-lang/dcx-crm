@@ -3,9 +3,11 @@ import html.parser
 import json
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / '.tools/email-archive'
+# Optional --output=<folder> for a second archive; defaults to the original export.
+OUT = next((pathlib.Path(a[9:]).resolve() for a in sys.argv[1:] if a.startswith('--output=')), ROOT / '.tools/email-archive')
 
 
 class EmailText(html.parser.HTMLParser):
