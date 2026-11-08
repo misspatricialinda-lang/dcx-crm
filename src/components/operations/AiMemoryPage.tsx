@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { InfoTip } from './InfoTip';
 import { Brain, Check, ExternalLink, Inbox, PackageSearch, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 type Scope = 'customer'|'supplier';
@@ -29,12 +30,14 @@ export function AiMemoryPage({ preview, onOpenInbox }: { preview:boolean; onOpen
   const [rules,setRules]=useState<Rule[]|null>(null), [error,setError]=useState(''), [busy,setBusy]=useState('');
   const [adding,setAdding]=useState(''), [addScope,setAddScope]=useState<Scope>('customer');
   const [editing,setEditing]=useState<{id:string;text:string;scope:Scope}|null>(null);
-  const [deleting,setDeleting]=useState(''), [search,setSearch]=useState(''), [state,setState]=useState<State>('all'), [place,setPlace]=useState<Place>('all');
+  const [deleting,setDeleting]=useState(''), [search,setSearch]=useState(''), [state,setState]=useState<State>('all'), [place,setPlace]=useState<Place>(()=>{const tag=location.hash.slice(1).split('/')[1];return tag==='supplier'||tag==='customer'?tag:'all';});
   async function load(){
     if(preview){setRules([]);return;}
     try{setRules((await request<{rules:Rule[]}>('action=rules')).rules.map(r=>({...r,scope:r.scope||'customer'})));setError('');}catch(cause){setError((cause as Error).message);}
   }
   useEffect(()=>{void load();},[preview]);
+  // #ai-memory/supplier or #ai-memory/customer opens the page on those rules (the AI memory buttons use it).
+  useEffect(()=>{const follow=()=>{const tag=location.hash.slice(1).split('/')[1];if(tag==='supplier'||tag==='customer')setPlace(tag);};window.addEventListener('hashchange',follow);return()=>window.removeEventListener('hashchange',follow);},[]);
   async function run(key:string, body:Record<string,unknown>, after?:()=>void){
     if(busy)return;setBusy(key);setError('');
     try{await request('',body);after?.();await load();}catch(cause){setError((cause as Error).message);}finally{setBusy('');}
@@ -49,7 +52,7 @@ export function AiMemoryPage({ preview, onOpenInbox }: { preview:boolean; onOpen
   return <section className="sq-page ai-memory-page">
     <div className="sq-hero">
       <div className="sq-hero-icon"><Brain size={26}/></div>
-      <div><span className="sq-eyebrow">WHAT THE AI HAS LEARNED</span><h1>AI memory</h1><p>Rules that are on are followed every time, newest first. <b>Inbox</b> rules apply to replies to customers; <b>Supplier</b> rules apply only to price requests in Supplier quotes.</p></div>
+      <div><span className="sq-eyebrow">WHAT THE AI HAS LEARNED</span><h1>AI memory <InfoTip title="How AI memory works" label="How AI memory works"><p>Rules are short instructions the AI follows <b>every time</b> it writes. They are plain text, sent with each request, newest first; when two disagree, the newer one wins.</p><ul><li><b>Inbox</b> rules: replies to customers.</li><li><b>Supplier</b> rules: price requests in Supplier quotes.</li></ul><p>Rules are added when you correct the AI, type <b>/learn</b>, or add one here. Switch a rule off to pause it without deleting it.</p></InfoTip></h1><p>Rules that are on are followed every time, newest first. <b>Inbox</b> rules apply to replies to customers; <b>Supplier</b> rules apply only to price requests in Supplier quotes.</p></div>
     </div>
     {error&&<p className="form-error" role="alert">{error}</p>}
     {preview?<p className="sq-empty">AI memory needs the live database.</p>:<>

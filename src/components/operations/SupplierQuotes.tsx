@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { BellRing, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, Send, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { BellRing, Brain, Check, CheckCircle2, Clock3, Copy, ExternalLink, Mail, PackageSearch, Plus, Send, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { InfoTip } from './InfoTip';
 
 type Supplier = { id: string; name: string; contact: string | null; email: string };
 type Recipient = {
@@ -79,7 +80,7 @@ export function SupplierQuotes({ preview, onOpenInbox }: { preview: boolean; onO
   return <section className="sq-page">
     <div className="sq-hero">
       <div className="sq-hero-icon"><PackageSearch size={26}/></div>
-      <div><span className="sq-eyebrow">PRICE REQUESTS TO SUPPLIERS</span><h1>Supplier quotes</h1><p>Ask several suppliers at once and see who has answered.</p></div>
+      <div><span className="sq-eyebrow">PRICE REQUESTS TO SUPPLIERS</span><h1>Supplier quotes <InfoTip title="Supplier quotes"><ul><li>From a customer's email in the Inbox, choose <b>Ask suppliers</b>, or start a <b>New request</b> here.</li><li>The AI writes one short email per supplier. Check them, then click <b>Send</b>: each supplier gets their own email from your Outlook.</li><li>Replies are matched automatically and the AI fills in price and delivery time. Use <b>Remind</b> if a supplier is slow.</li><li>The customer's name and details are never included.</li></ul></InfoTip></h1><p>Ask several suppliers at once and see who has answered.</p></div>
       <div className="sq-hero-actions">
         <button className="secondary sq-manage" onClick={() => setManaging(!managing)} aria-expanded={managing}><Users size={16}/> Suppliers <b>{data.suppliers.length}</b></button>
         <button className="primary" onClick={() => { setAsk(null); setComposer(true); }}><Plus size={16}/> New request</button>
@@ -122,7 +123,7 @@ function SupplierList({ suppliers, busy, run, onClose }: { suppliers: Supplier[]
   const [form, setForm] = useState({ name: '', contact: '', email: '' });
   const valid = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(form.email.trim());
   return <div className="sq-new panel sq-manager">
-    <div className="sq-new-head"><h2>Suppliers</h2><button className="text-button" onClick={onClose} aria-label="Close"><X size={16}/></button></div>
+    <div className="sq-new-head"><h2>Suppliers <InfoTip title="Supplier list"><p>Price requests can go to anyone on this list. It is saved on the server, so every device sees the same suppliers.</p><p>Removing a supplier moves it to the Customers trash; add the same email again to bring it back. Past requests keep their emails.</p></InfoTip></h2><button className="text-button" onClick={onClose} aria-label="Close"><X size={16}/></button></div>
     <p className="field-help">Price requests can go to everyone on this list. Changes are saved for all devices.</p>
     <form className="sq-add" onSubmit={event => { event.preventDefault(); if (valid) void run('supplier-add', 'rfq-supplier-add', form, () => setForm({ name: '', contact: '', email: '' })); }}>
       <label className="sq-label">Email<input type="email" inputMode="email" autoComplete="off" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="sales@supplier.com"/></label>
@@ -185,7 +186,8 @@ function DraftEmail({ draft, busy, run, canRemove, onNotice }: { draft: Recipien
       <input id={`sq-ai-change-${draft.id}`} aria-label="Tell AI what to change" placeholder="Tell AI what to change, e.g. don't ask for CAD or lead time" value={instruction} onChange={e => setInstruction(e.target.value)} disabled={!!busy}/>
       <button className="secondary compact" disabled={!!busy || !instruction.trim() || dirty} title={dirty ? 'Save or undo your own edits first' : undefined}>{busy === 'rewrite:' + draft.id ? 'Rewriting…' : 'Change'}</button>
     </form>
-    <small className="field-help">Changes every unsent email in this request. Corrections that should apply to every request are saved to AI memory.</small>
+    <div className="sq-ai-row"><a className="inline-ai-memory-link" href="#ai-memory/supplier" target="_blank" rel="noopener" title="View and edit the supplier rules the AI has learned"><Brain size={13} aria-hidden="true"/> AI memory</a>
+      <InfoTip title="Tell AI what to change"><p>Type what you want different, e.g. "don't ask for lead time" or "make it shorter". The AI rewrites <b>every unsent email in this request</b> the same way.</p><p>If your correction should apply to all future requests, it is <b>saved to AI memory</b> as a <b>Supplier</b> rule. Supplier rules only affect emails to suppliers, never replies to customers.</p></InfoTip></div>
     <div className="sq-draft-actions">
       <button className="secondary compact" disabled={!dirty || !!busy} onClick={() => void run('save:' + draft.id, 'rfq-save', { id: draft.id, subject, body })}>{busy === 'save:' + draft.id ? 'Saving…' : 'Save changes'}</button>
       {canRemove && <button className="text-button" disabled={!!busy} onClick={() => void run('remove:' + draft.id, 'rfq-remove', { id: draft.id })}><Trash2 size={14}/> Don't send to this supplier</button>}

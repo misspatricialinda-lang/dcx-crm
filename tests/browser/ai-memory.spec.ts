@@ -52,6 +52,14 @@ test('hidden AI memory page lists, edits, switches off and deletes rules', async
   await page.getByRole('button', { name: 'Add rule' }).click();
   await expect.poll(() => posts.at(-1)).toMatchObject({ action: 'learn', rule: 'Ask suppliers in one line.', scope: 'supplier' });
 
+  // The AI memory button on a supplier draft opens the page on Supplier rules.
+  await page.goto('/#ai-memory/supplier');
+  await expect(page.getByRole('tab', { name: /Supplier/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.ai-memory-list li')).toHaveCount(1);
+  await page.getByRole('button', { name: 'How AI memory works' }).click();
+  await expect(page.getByRole('dialog', { name: 'How AI memory works' })).toBeVisible();
+  await page.keyboard.press('Escape');
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(page.getByRole('heading', { name: 'AI memory' })).toBeVisible();

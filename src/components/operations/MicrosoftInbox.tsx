@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { trackingRequest } from '../../lib/email-tracking';
 import { InlineAiReply, type ReplyOutcome } from "./InlineAiReply";
 import { TrackedInbox } from "./TrackedInbox";
+import { InfoTip } from "./InfoTip";
 import { SignatureField } from "./EmailSignature";
 import { FollowupBar, FollowupRules, followupDate, followupLabels, followupRequest, type FollowupRecord, type FollowupSettings } from "./FollowupControls";
 import DOMPurify from "dompurify";
@@ -611,8 +612,8 @@ function MicrosoftInbox({
     setPhoneReading(false);
   }
   const aiFolderButtons = <>
-    <div className="live-folder-row"><button className={aiView ? 'active' : ''} onClick={() => chooseFolder(AI_FOLDER)}><Sparkles size={16} aria-hidden="true" /><span>AI drafts</span>{drafts.length > 0 && <b>{drafts.length}</b>}</button></div>
-    <div className="live-folder-row"><button className={followView ? 'active' : ''} onClick={() => chooseFolder(FOLLOW_FOLDER)}><AlarmClock size={16} aria-hidden="true" /><span>Follow-ups</span>{dueFollowups > 0 && <b>{dueFollowups}</b>}</button></div>
+    <div className="live-folder-row"><button className={aiView ? 'active' : ''} onClick={() => chooseFolder(AI_FOLDER)}><Sparkles size={16} aria-hidden="true" /><span>AI drafts</span>{drafts.length > 0 && <b>{drafts.length}</b>}</button><InfoTip title="AI drafts"><p>Emails from customers that the AI has written a reply for. Open one to check, edit and send the reply.</p><p>Supplier emails never get AI drafts; they are handled in Supplier quotes.</p></InfoTip></div>
+    <div className="live-folder-row"><button className={followView ? 'active' : ''} onClick={() => chooseFolder(FOLLOW_FOLDER)}><AlarmClock size={16} aria-hidden="true" /><span>Follow-ups</span>{dueFollowups > 0 && <b>{dueFollowups}</b>}</button><InfoTip title="Follow-ups"><p>Conversations where you are waiting on the customer, or where you set a reminder with <b>Remind me about this email</b>.</p><p>When a reminder is due (9 AM Toronto), it shows here and the AI writes a follow-up email for you to check. Nothing is sent on its own.</p></InfoTip></div>
     <div className="live-folder-row"><button className={discardedView ? 'active' : ''} onClick={() => chooseFolder(AI_DISCARDED)}><Trash2 size={16} aria-hidden="true" /><span>Discarded AI drafts</span></button></div>
   </>;
   return (
@@ -1198,6 +1199,7 @@ function LiveConversation({
           // Opens Supplier quotes with this email; the unsaved-reply guard runs first.
           if (window.dispatchEvent(new Event("dcx-before-navigate", { cancelable: true }))) location.hash = `suppliers/ask/${encodeURIComponent(latestIncoming.internetMessageId!)}`;
         }}><PackageSearch size={14} /> Ask suppliers</button>}
+        {provider === "microsoft" && !supplier && latestIncoming?.internetMessageId && <InfoTip title="Ask suppliers"><p>Opens Supplier quotes with this email. The AI reads what the customer needs and writes a short price request to each supplier you choose. Nothing is sent until you click Send, and the customer's details are never shared.</p></InfoTip>}
         <p className="field-help">
           History includes matching messages from your mailbox folders.
         </p>

@@ -52,6 +52,16 @@ test('supplier quotes: write emails, send, and see who replied with their price'
   const atlasDraft = card.locator('.sq-draft', { hasText: 'Atlas Power (demo)' });
   await atlasDraft.locator('summary').click();
   await expect(atlasDraft.getByLabel('Subject')).toHaveValue(/DCX-RFQ-1001/);
+  // Teaching the supplier AI: AI memory opens on Supplier rules, the info tip explains, the change box rewrites.
+  await expect(atlasDraft.getByRole('link', { name: 'AI memory' })).toHaveAttribute('href', '#ai-memory/supplier');
+  await atlasDraft.getByRole('button', { name: 'How tell ai what to change works' }).click();
+  await expect(page.getByRole('dialog', { name: 'Tell AI what to change' })).toContainText('Supplier rules only affect emails to suppliers');
+  await page.screenshot({ path: 'tmp/browser-results/supplier-info-tip.png' });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Tell AI what to change' })).toHaveCount(0);
+  await atlasDraft.getByLabel('Tell AI what to change', { exact: true }).fill("don't ask for lead time");
+  await atlasDraft.getByRole('button', { name: 'Change', exact: true }).click();
+  await expect.poll(() => posted.at(-1)).toMatchObject({ action: 'rfq-rewrite', id: 'r-' + suppliers[0].id, instruction: "don't ask for lead time" });
   await card.getByRole('button', { name: 'Send to 3 suppliers' }).click();
   expect(posted.at(-1)).toMatchObject({ action: 'rfq-send', rfq_id: 'rfq-1' });
 
