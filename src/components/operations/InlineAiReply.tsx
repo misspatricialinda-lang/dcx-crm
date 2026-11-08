@@ -17,8 +17,12 @@ type ChatTurn = { role:'owner'|'assistant'; text:string; changed?:boolean; rule?
 
 async function assistant<T>(query:string, body?:unknown):Promise<T> {
   const response = await fetch(`/api/email-assistant?${query}`, { credentials:'same-origin', cache:'no-store', ...(body ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) } : {}) });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'AI replies are unavailable.');
+  const text = await response.text();
+  let result: any;
+  // A request cut off by the server's time limit returns a plain error page, not JSON. The AI may still
+  // finish the work, so the caller checks the draft instead of showing that page's text.
+  try { result = JSON.parse(text); } catch { throw Object.assign(new Error('The AI is taking longer than usual.'), { slow: true }); }
+  if (!response.ok) throw Object.assign(new Error(result.error || 'AI replies are unavailable.'), { slow: response.status === 504 });
   return result;
 }
 const quickChanges = ['Shorter', 'More formal', 'Friendlier', 'Fix grammar'];
@@ -141,7 +145,24 @@ export function InlineAiReply({ internetId, sourceMessageId, revision, customers
       await load(true);
       onOutcome('changed');
       return result;
-    }catch(cause){setError(action==='send'?`${(cause as Error).message} Check Outlook Sent Items before trying again.`:`${(cause as Error).message} Your draft is preserved.`);return null;}
+    }catch(cause){
+      // The AI kept working after the request timed out: wait for the draft to change and report that.
+      if((cause as {slow?:boolean}).slow&&['rewrite','regenerate','assist'].includes(action)){
+        const before=latest.current?.updated_at;
+        setNotice('The AI is taking longer than usual. Still working…');
+        for(let i=0;i<20;i++){
+          await new Promise(resolve=>setTimeout(resolve,4000));
+          const fresh=await assistant<{draft:Draft|null}>(`action=for-message&internet_message_id=${encodeURIComponent(internetId||'')}`).catch(()=>null);
+          if(fresh?.draft&&fresh.draft.updated_at!==before){
+            latest.current=fresh.draft;setDraft(fresh.draft);setBody(fresh.draft.current_body||'');setSavedBody(fresh.draft.current_body||'');
+            setNotice('Draft updated.');onOutcome('changed');
+            return {kind:'draft',note:''};
+          }
+        }
+        setNotice('');setError(action==='assist'?'The AI took too long to answer. Your draft is unchanged; please try again.':'The AI took too long. Your draft is unchanged; please try again.');
+        return null;
+      }
+      setError(action==='send'?`${(cause as Error).message} Check Outlook Sent Items before trying again.`:`${(cause as Error).message} Your draft is preserved.`);return null;}
     finally{setBusy('');}
   }
   const save=()=>workflow('save',{body_text:body,body_html:''});
