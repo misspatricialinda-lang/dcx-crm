@@ -12,6 +12,8 @@ let cachedToken;
 export function graphClient(env, transport = fetch) {
   const config = mailConfiguration(env);
   const root = `${GRAPH}/users/${encodeURIComponent(config.mailbox)}`;
+  // Microsoft may write the mailbox in continuation links with '@' instead of '%40'.
+  const roots = [root, `${GRAPH}/users/${config.mailbox}`];
   async function token() {
     const key = createHash('sha256').update(JSON.stringify(config)).digest('hex');
     if (cachedToken?.key === key && cachedToken.until > Date.now()) return cachedToken.value;
@@ -28,7 +30,7 @@ export function graphClient(env, transport = fetch) {
   return async function graph(path, { method = 'GET', body, text = false, etag, raw = false } = {}) {
     const url = path.startsWith('https://') ? path : root + path;
     // Continuations may only access this configured mailbox. Never proxy arbitrary URLs.
-    if (!url.startsWith(root + '/')) throw new MailError(400, 'Invalid mailbox continuation.');
+    if (!roots.some(r => url.startsWith(r + '/'))) throw new MailError(400, 'Invalid mailbox continuation.');
     let response;
     try {
       response = await transport(url, { method, redirect: 'error', signal: AbortSignal.timeout(20000), headers: {

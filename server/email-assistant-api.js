@@ -3,7 +3,7 @@ import { configuration, getSession } from './auth-core.js';
 import { n8nConfig } from './n8n-config.js';
 import { cleanSignatureFields, signatureHtml, signatureRows } from './email-signature.js';
 import { discardPreparedReply, prepareAiReply, sendAiDraft } from './draft-send.js';
-import { delegatedGraphClient } from './microsoft-oauth.js';
+import { mailboxGraphClient } from './microsoft-oauth.js';
 import { supplierQuotesRequest } from './supplier-quotes-api.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
@@ -34,7 +34,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
   try {
     // Supplier quotes live here (not their own /api file) to stay within the deployment's function limit.
     const supplierQuotes = input => supplierQuotesRequest({ db, env, session, method: req.method, url, input, transport: injected.fetch || fetch,
-      connect: async () => injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await delegatedGraphClient(env) });
+      connect: async () => injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await mailboxGraphClient(env) });
     if (req.method === 'GET' && ['rfq-list', 'rfq-links', 'rfq-thread'].includes(url.searchParams.get('action'))) { const result = await supplierQuotes(); return reply(res, result.status, result.body); }
     if(req.method==='GET' && url.searchParams.get('action')==='signature') {
       const row=await checked(db.from('crm_email_signature').select('fields,enabled,banner_base64,banner_content_type,updated_at,updated_by').eq('id',1).maybeSingle());
@@ -143,7 +143,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     }
     // Large files are uploaded into an Outlook reply prepared before the send (see /api/mail upload-session).
     if (['prepare-send','discard-staged'].includes(input?.action)) {
-      const connected = injected.graph ? { graph: injected.graph } : await delegatedGraphClient(env);
+      const connected = injected.graph ? { graph: injected.graph } : await mailboxGraphClient(env);
       if (!connected) return reply(res, 503, { error: 'Connect the Outlook mailbox before sending.' });
       if (input.action === 'discard-staged') {
         if (typeof input.reply_id !== 'string' || !input.reply_id || input.reply_id.length > 2048) return reply(res, 400, { error: 'Invalid prepared reply.' });
@@ -170,7 +170,7 @@ export async function emailAssistantHandler(req, res, env = process.env, injecte
     if (input.action === 'send') {
       if (typeof input.updated_at !== 'string' || !Number.isFinite(Date.parse(input.updated_at))) return reply(res, 400, { error: 'Reload the draft before sending.' });
       if (input.signature_html !== undefined && (typeof input.signature_html !== 'string' || input.signature_html.length > 20000)) return reply(res, 400, { error: 'The signature is too long.' });
-      const connected = injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await delegatedGraphClient(env);
+      const connected = injected.graph ? { graph: injected.graph, connection: { email_address: injected.mailbox } } : await mailboxGraphClient(env);
       if (!connected) return reply(res, 503, { error: 'Connect the Outlook mailbox before sending.' });
       const result = await sendAiDraft({ db, graph: connected.graph, mailbox: connected.connection.email_address, draftId: draft.id, updatedAt: input.updated_at, attachments: input.attachments, actor: session.email, signatureHtml: input.signature_html, stagedReplyId: input.staged_reply_id, cc: input.cc || [], bcc: input.bcc || [] });
       return reply(res, result.status, result.body);

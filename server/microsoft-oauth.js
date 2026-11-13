@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { configuration, getSession } from './auth-core.js';
-import { MailError } from './microsoft-graph.js';
+import { MailError, graphClient, mailConfiguration, mailConfigured } from './microsoft-graph.js';
 
 const AUTHORITY = 'https://login.microsoftonline.com/common/oauth2/v2.0';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -28,6 +28,14 @@ export async function delegatedGraphClient(env=process.env,injectedDb,transport=
  const root=`${GRAPH}/me`;
  const graph=async(path,{method='GET',body,text=false,etag,raw=false}={})=>{const url=path.startsWith('https://')?path:root+(path.startsWith('/')?path:'/'+path);if(!url.startsWith(root+'/'))throw new MailError(400,'Invalid Microsoft continuation.');let response;try{response=await transport(url,{method,redirect:'error',signal:AbortSignal.timeout(20000),headers:{Authorization:`Bearer ${await token()}`,'Content-Type':'application/json',Prefer:`IdType="ImmutableId"${text?', outlook.body-content-type="text"':''}`,...(etag?{'If-Match':etag}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch(error){if(error instanceof MailError)throw error;throw new MailError(502,method==='GET'?'Microsoft could not be reached.':'Microsoft did not confirm the action. Check Outlook before retrying.');}if(!response.ok){if(response.status===401)accessCache.delete(connection.id);let detail={};try{detail=await response.json();}catch{}throw new MailError([400,401,403,404,410,412,429].includes(response.status)?response.status:502,detail.error?.message||'Microsoft could not complete the action.',response.headers.get('Retry-After'));}if(raw)return response;return [202,204].includes(response.status)?null:response.json();};
  return {graph,connection};
+}
+// The signed-in mailbox when there is one; otherwise the app-only login from MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_ID,
+// MICROSOFT_CLIENT_SECRET and MICROSOFT_MAILBOX. That needs no user sign-in, only the app's admin-granted Application mail permissions.
+export async function mailboxGraphClient(env=process.env,injectedDb,transport=fetch){
+ const delegated=await delegatedGraphClient(env,injectedDb,transport).catch(error=>{if(['PGRST205','42P01'].includes(error.code))return null;throw error;});
+ if(delegated)return delegated;
+ if(!mailConfigured(mailConfiguration(env)))return null;
+ return {graph:graphClient(env,transport),connection:{email_address:env.MICROSOFT_MAILBOX.trim().toLowerCase(),app_only:true}};
 }
 export async function microsoftOAuthHandler(req,res,env=process.env,injected={}){
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');

@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { configuration, getSession } from './auth-core.js';
 import { MailError, mailConfiguration, mailConfigured } from './microsoft-graph.js';
-import { delegatedGraphClient } from './microsoft-oauth.js';
+import { mailboxGraphClient } from './microsoft-oauth.js';
 import { hostingerConfigured, hostingerConfiguration, hostingerMailHandler } from './hostinger-mail.js';
 import { createClient } from '@supabase/supabase-js';
 import { bannerAttachment, customSignatureHtml, insertSignature, loadSignature, SIGNATURE_CID, textToHtml } from './email-signature.js';
@@ -76,8 +76,8 @@ export async function microsoftMailHandler(req, res, env = process.env, injected
   const config = mailConfiguration(env);
   let graph = injectedGraph, mailbox = config.mailbox;
   if (!graph) {
-    const delegated = await delegatedGraphClient(env).catch(error => { if (['PGRST205','42P01'].includes(error.code)) return null; throw error; });
-    if (delegated) { graph = delegated.graph; mailbox = delegated.connection.email_address; env = { ...env, MICROSOFT_MAILBOX: mailbox }; }
+    const connected = await mailboxGraphClient(env);
+    if (connected) { graph = connected.graph; mailbox = connected.connection.email_address; env = { ...env, MICROSOFT_MAILBOX: mailbox }; }
   }
   if (!graph) return respond(res, action === 'status' ? 200 : 503, { configured: false, provider: 'microsoft', connectionRequired: true, error: 'Connect a Microsoft mailbox from the dashboard.' });
   const page = async path => {

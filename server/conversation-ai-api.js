@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { configuration, getSession } from './auth-core.js';
-import { delegatedGraphClient } from './microsoft-oauth.js';
+import { mailboxGraphClient } from './microsoft-oauth.js';
 import { CONVERSATION_AI_SYSTEM_PROMPT } from './conversation-ai-prompt.js';
 import { retrieveEmailMemory } from './email-memory.js';
 
@@ -91,7 +91,7 @@ export async function conversationAiHandler(req, res, env = process.env, injecte
     const input = await readBody(req);
     const id = input.conversationId;
     if (typeof id !== 'string' || !id || id.length > 2048) return respond(res, 400, { error: 'Select a conversation.' });
-    const delegated = injected.graph ? null : await delegatedGraphClient(env);
+    const delegated = injected.graph ? null : await mailboxGraphClient(env);
     const graph = injected.graph || delegated?.graph;
     if (!graph) return respond(res, 503, { error: 'Connect a Microsoft mailbox to analyze conversations.' });
     const mailbox = (injected.mailbox || delegated?.connection.email_address || env.MICROSOFT_MAILBOX || '').toLowerCase();
